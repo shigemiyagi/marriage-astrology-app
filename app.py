@@ -8,7 +8,7 @@ from collections import defaultdict
 import traceback
 
 # --- 初期設定 ---
-APP_VERSION = "8.5 (2人用モード グラフ・期間選択機能追加)"
+APP_VERSION = "8.6 (デフォルト値・期間修正版)"
 swe.set_ephe_path('ephe')
 
 # --- 定数定義 ---
@@ -71,38 +71,23 @@ def get_natal_chart(birth_dt_jst, lon, lat):
     year, month, day = dt_utc.year, dt_utc.month, dt_utc.day
     hour, minute, second = dt_utc.hour, dt_utc.minute, float(dt_utc.second)
     jday = swe.utc_to_jd(year, month, day, hour, minute, second, 1)[1]
-
     chart_data = {"jday": jday, "lon": lon, "lat": lat}
-    
     try:
         cusps, ascmc = swe.houses(jday, lat, lon, b'P')
     except Exception:
-        # エラーメッセージはUI側で表示するため、ここではNoneを返す
         return None
-        
-    chart_data["ASC_pos"] = float(ascmc[0])
-    chart_data["MC_pos"] = float(ascmc[1])
-    
-    # ... (以降のチャート計算は変更なし) ...
+    chart_data["ASC_pos"], chart_data["MC_pos"] = float(ascmc[0]), float(ascmc[1])
     temp_planet_ids = PLANET_IDS.copy()
     temp_planet_ids.update({"ASC": swe.ASC, "MC": swe.MC})
-    
     for name, pid in temp_planet_ids.items():
-        if name in ["ASC", "MC"]:
-            chart_data[name] = chart_data[f"{name}_pos"]
-        else:
-            chart_data[name] = float(swe.calc_ut(jday, pid)[0][0])
-
+        chart_data[name] = chart_data[f"{name}_pos"] if name in ["ASC", "MC"] else float(swe.calc_ut(jday, pid)[0][0])
     chart_data["DSC_pos"] = (chart_data["ASC_pos"] + 180) % 360
     chart_data["IC_pos"] = (chart_data["MC_pos"] + 180) % 360
     chart_data["cusps"] = cusps
-
     dsc_sign_index = int(chart_data["DSC_pos"] / 30)
     dsc_sign = ZODIAC_SIGNS[dsc_sign_index]
     ruler_name = RULER_OF_SIGN[dsc_sign]
-    chart_data["7H_RulerName"] = ruler_name
-    chart_data["7H_Ruler_pos"] = chart_data.get(ruler_name)
-    
+    chart_data["7H_RulerName"], chart_data["7H_Ruler_pos"] = ruler_name, chart_data.get(ruler_name)
     return chart_data
 
 def calculate_midpoint(p1, p2):
@@ -112,60 +97,37 @@ def calculate_midpoint(p1, p2):
 @st.cache_data
 def create_composite_chart(chart_a, chart_b):
     composite_chart = {"lon": chart_a["lon"], "lat": chart_a["lat"]}
-    
     for name in PLANET_IDS.keys():
         composite_chart[name] = calculate_midpoint(chart_a[name], chart_b[name])
-
     composite_chart["ASC_pos"] = calculate_midpoint(chart_a["ASC_pos"], chart_b["ASC_pos"])
     composite_chart["MC_pos"] = calculate_midpoint(chart_a["MC_pos"], chart_b["MC_pos"])
-    
     composite_chart["cusps"] = tuple([(composite_chart["ASC_pos"] + 30 * i) % 360 for i in range(12)])
     composite_chart["DSC_pos"] = (composite_chart["ASC_pos"] + 180) % 360
-    
-    composite_chart["jday"] = chart_a["jday"]
-    composite_chart["太陽"] = composite_chart.get("太陽")
-    
-    composite_chart["7H_RulerName"] = None
-    composite_chart["7H_Ruler_pos"] = None
-    
+    composite_chart["jday"], composite_chart["太陽"] = chart_a["jday"], composite_chart.get("太陽")
+    composite_chart["7H_RulerName"], composite_chart["7H_Ruler_pos"] = None, None
     return composite_chart
 
 @st.cache_data
 def find_events(_natal_chart, birth_dt, years=80, is_composite=False):
     events_by_date = {}
-    t_planets = ["木星", "土星", "天王星"]
-    p_planets = ["月", "金星"]
+    t_planets, p_planets = ["木星", "土星", "天王星"], ["月", "金星"]
     sa_points = ["ASC_pos", "MC_pos", "金星", "木星"] if is_composite else ["ASC_pos", "MC_pos", "金星", "木星", "7H_Ruler_pos"]
-    base_jday = _natal_chart["jday"]
-    natal_sun_pos = _natal_chart["太陽"]
-    prev_positions = {}
-
+    base_jday, natal_sun_pos, prev_positions = _natal_chart["jday"], _natal_chart["太陽"], {}
     for day_offset in range(1, int(365.25 * years)):
         current_date = birth_dt + timedelta(days=day_offset)
-        current_jday = base_jday + day_offset
-        p_jday = base_jday + day_offset / 365.25
+        current_jday, p_jday = base_jday + day_offset, base_jday + day_offset / 365.25
         t_pos = {p: float(swe.calc_ut(current_jday, PLANET_IDS[p])[0][0]) for p in t_planets}
         p_pos = {p: float(swe.calc_ut(p_jday, PLANET_IDS[p])[0][0]) for p in p_planets}
         sa_arc = float(swe.calc_ut(p_jday, swe.SUN)[0][0]) - natal_sun_pos
         sa_pos = {p: (_natal_chart.get(p, 0) + sa_arc) % 360 for p in sa_points if _natal_chart.get(p) is not None}
-
         if not prev_positions:
-            prev_positions = {'t': t_pos, 'p': p_pos, 'sa': sa_pos}
-            continue
-        
-        def check_crossing(current_pos, prev_pos, target_pos, orb):
-            dist_curr = (current_pos - target_pos + 180) % 360 - 180
-            dist_prev = (prev_pos - target_pos + 180) % 360 - 180
-            if abs(dist_curr) <= orb and abs(dist_prev) > orb: return True
-            if dist_prev * dist_curr < 0: return True
-            return False
-
-        def check_ingress(current_pos, prev_pos, cusp_pos):
-            norm_curr = (current_pos - cusp_pos + 360) % 360
-            norm_prev = (prev_pos - cusp_pos + 360) % 360
-            return norm_prev > 350 and norm_curr < 10
-
-        # --- イベントチェック (ロジックは変更ないため、コードは省略) ---
+            prev_positions = {'t': t_pos, 'p': p_pos, 'sa': sa_pos}; continue
+        def check_crossing(curr, prev, target, orb):
+            dist_c = (curr - target + 180) % 360 - 180; dist_p = (prev - target + 180) % 360 - 180
+            return (abs(dist_c) <= orb and abs(dist_p) > orb) or (dist_p * dist_c < 0)
+        def check_ingress(curr, prev, cusp):
+            return ((curr - cusp + 360) % 360 < 10) and ((prev - cusp + 360) % 360 > 350)
+        # Event checks...
         if check_ingress(t_pos["木星"], prev_positions['t']["木星"], _natal_chart["cusps"][6]): events_by_date.setdefault(current_date.date(), []).append("T_JUP_7H_INGRESS")
         if check_ingress(t_pos["土星"], prev_positions['t']["土星"], _natal_chart["cusps"][6]): events_by_date.setdefault(current_date.date(), []).append("T_SAT_7H_INGRESS")
         if check_crossing(t_pos["木星"], prev_positions['t']["木星"], _natal_chart["DSC_pos"], ORB): events_by_date.setdefault(current_date.date(), []).append("T_JUP_CONJ_DSC")
@@ -176,14 +138,10 @@ def find_events(_natal_chart, birth_dt, years=80, is_composite=False):
         for aspect in MAJOR_ASPECTS:
             if check_crossing(t_pos["土星"], prev_positions['t']["土星"], (_natal_chart["金星"] + aspect) % 360, ORB): events_by_date.setdefault(current_date.date(), []).append("T_SAT_ASPECT_VENUS")
             if check_crossing(t_pos["天王星"], prev_positions['t']["天王星"], (_natal_chart["金星"] + aspect) % 360, ORB): events_by_date.setdefault(current_date.date(), []).append("T_URA_ASPECT_VENUS")
-        if "ASC_pos" in sa_pos and "金星" in _natal_chart:
-            if check_crossing(sa_pos["ASC_pos"], prev_positions['sa']["ASC_pos"], _natal_chart["金星"], ORB): events_by_date.setdefault(current_date.date(), []).append("SA_ASC_CONJ_VENUS")
-        if "MC_pos" in sa_pos and "金星" in _natal_chart:
-            if check_crossing(sa_pos["MC_pos"], prev_positions['sa']["MC_pos"], _natal_chart["金星"], ORB): events_by_date.setdefault(current_date.date(), []).append("SA_MC_CONJ_VENUS")
-        if "金星" in sa_pos and "ASC_pos" in _natal_chart:
-            if check_crossing(sa_pos["金星"], prev_positions['sa']["金星"], _natal_chart["ASC_pos"], ORB): events_by_date.setdefault(current_date.date(), []).append("SA_VENUS_CONJ_ASC")
-        if "木星" in sa_pos and "ASC_pos" in _natal_chart:
-            if check_crossing(sa_pos["木星"], prev_positions['sa']["木星"], _natal_chart["ASC_pos"], ORB): events_by_date.setdefault(current_date.date(), []).append("SA_JUP_CONJ_ASC")
+        if "ASC_pos" in sa_pos and "金星" in _natal_chart and check_crossing(sa_pos["ASC_pos"], prev_positions['sa']["ASC_pos"], _natal_chart["金星"], ORB): events_by_date.setdefault(current_date.date(), []).append("SA_ASC_CONJ_VENUS")
+        if "MC_pos" in sa_pos and "金星" in _natal_chart and check_crossing(sa_pos["MC_pos"], prev_positions['sa']["MC_pos"], _natal_chart["金星"], ORB): events_by_date.setdefault(current_date.date(), []).append("SA_MC_CONJ_VENUS")
+        if "金星" in sa_pos and "ASC_pos" in _natal_chart and check_crossing(sa_pos["金星"], prev_positions['sa']["金星"], _natal_chart["ASC_pos"], ORB): events_by_date.setdefault(current_date.date(), []).append("SA_VENUS_CONJ_ASC")
+        if "木星" in sa_pos and "ASC_pos" in _natal_chart and check_crossing(sa_pos["木星"], prev_positions['sa']["木星"], _natal_chart["ASC_pos"], ORB): events_by_date.setdefault(current_date.date(), []).append("SA_JUP_CONJ_ASC")
         if not is_composite and "7H_Ruler_pos" in sa_pos:
             if check_crossing(sa_pos["7H_Ruler_pos"], prev_positions['sa'].get("7H_Ruler_pos", 0), _natal_chart["ASC_pos"], ORB): events_by_date.setdefault(current_date.date(), []).append("SA_7Ruler_CONJ_ASC_DSC")
             if check_crossing(sa_pos["7H_Ruler_pos"], prev_positions['sa'].get("7H_Ruler_pos", 0), _natal_chart["DSC_pos"], ORB): events_by_date.setdefault(current_date.date(), []).append("SA_7Ruler_CONJ_ASC_DSC")
@@ -193,15 +151,12 @@ def find_events(_natal_chart, birth_dt, years=80, is_composite=False):
         if "火星" in _natal_chart and "金星" in p_pos:
             for aspect in MAJOR_ASPECTS:
                 if check_crossing(p_pos["金星"], prev_positions['p']["金星"], (_natal_chart["火星"] + aspect) % 360, ORB): events_by_date.setdefault(current_date.date(), []).append("P_VENUS_ASPECT_MARS")
-
         prev_positions = {'t': t_pos, 'p': p_pos, 'sa': sa_pos}
-
     scored_events = []
     for date, event_keys in events_by_date.items():
         unique_keys = list(set(event_keys))
         total_score = sum(EVENT_DEFINITIONS[key]["score"] for key in unique_keys)
         scored_events.append({"date": date, "score": total_score, "keys": unique_keys})
-    
     if not scored_events: return []
     max_score = max(event["score"] for event in scored_events) if scored_events else 1
     for event in scored_events:
@@ -252,29 +207,26 @@ if mode == "1人用":
     
     col1, col2 = st.columns(2)
     with col1:
-        birth_date = st.date_input("① 生年月日", min_value=datetime.date(1940, 1, 1), max_value=datetime.date.today(), value=datetime.date(1990, 1, 1))
+        birth_date = st.date_input("① 生年月日", value=datetime.date(1982, 10, 6))
     with col2:
-        pref = st.selectbox("③ 出生地", options=list(PREFECTURES.keys()), index=12)
+        pref = st.selectbox("③ 出生地", options=list(PREFECTURES.keys()), index=12) # 東京都
     
-    custom_time_str = st.text_input("② 詳細な時刻を入力 (例: 16:27)", "12:00")
+    custom_time_str = st.text_input("② 詳細な時刻を入力 (例: 16:27)", "02:30")
     try:
         hour, minute = map(int, custom_time_str.split(':'))
     except ValueError:
         st.warning("時刻は「時:分」の形式で入力してください。例: 16:27")
-        hour, minute = 12, 0
+        hour, minute = 2, 30
 
     st.markdown("---")
     st.markdown("#### ④ 鑑定範囲（年齢）")
     age_col1, age_col2 = st.columns(2)
     with age_col1:
         age_options = list(range(18, 81))
-        start_age = st.selectbox("開始年齢", options=age_options, index=7, key="start_age_1p") # デフォルト25歳
+        start_age = st.selectbox("開始年齢", options=age_options, index=2) # 20歳
     with age_col2:
         end_age_options = list(range(start_age, 81))
-        default_end_age_index = 20
-        if len(end_age_options) <= default_end_age_index:
-            default_end_age_index = len(end_age_options) - 1
-        end_age = st.selectbox("終了年齢", options=end_age_options, index=default_end_age_index, key="end_age_1p") 
+        end_age = st.selectbox("終了年齢", options=end_age_options, index=20) # 40歳
 
     if st.button("鑑定開始", type="primary"):
         jst_tz = timezone(timedelta(hours=9))
@@ -285,49 +237,30 @@ if mode == "1人用":
             natal_chart = get_natal_chart(birth_dt_jst, lon, lat)
             if natal_chart:
                 all_events = find_events(natal_chart, birth_dt_jst)
-                
-                filtered_events = []
-                for event in all_events:
-                    age = event["date"].year - birth_date.year - ((event["date"].month, event["date"].day) < (birth_date.month, birth_date.day))
-                    if start_age <= age <= end_age:
-                        event['age'] = age
-                        filtered_events.append(event)
+                filtered_events = [e for e in all_events if start_age <= (e['age'] := e["date"].year - birth_date.year - ((e["date"].month, e["date"].day) < (birth_date.month, birth_date.day))) <= end_age]
 
                 st.success("計算が完了しました！")
-
                 if filtered_events:
                     st.header(f"📊 結婚運勢グラフ（{start_age}歳～{end_age}歳）", divider="rainbow")
-                    df_for_chart = pd.DataFrame(filtered_events)
-                    chart_data = df_for_chart.groupby('age')['normalized_score'].max().reset_index()
-
-                    chart = alt.Chart(chart_data).mark_line(
-                        point=alt.OverlayMarkDef(color="#F63366", size=40)
-                    ).encode(
+                    df_chart = pd.DataFrame(filtered_events).groupby('age')['normalized_score'].max().reset_index()
+                    chart = alt.Chart(df_chart).mark_line(point=alt.OverlayMarkDef(color="#F63366", size=40)).encode(
                         x=alt.X('age:Q', title='年齢', scale=alt.Scale(zero=False, domain=[start_age, end_age])),
                         y=alt.Y('normalized_score:Q', title='重要度 (%)', scale=alt.Scale(domain=[0, 105])),
                         tooltip=[alt.Tooltip('age', title='年齢'), alt.Tooltip('normalized_score', title='重要度 (%)', format='.1f')]
-                    ).properties(
-                        title=alt.TitleParams(text='年齢別・結婚運のピーク', anchor='middle')
-                    ).interactive()
+                    ).properties(title=alt.TitleParams(text='年齢別・結婚運のピーク', anchor='middle')).interactive()
                     st.altair_chart(chart, use_container_width=True)
 
                 st.header(f"🌟 あなたの結婚運のピーク TOP15（{start_age}歳～{end_age}歳）", divider="rainbow")
-                
                 if not filtered_events:
                     st.warning(f"選択された年齢範囲（{start_age}歳～{end_age}歳）に、指定された重要な天体の配置は見つかりませんでした。")
                 else:
-                    sorted_filtered_events = sorted(filtered_events, key=lambda x: x['normalized_score'], reverse=True)
-                    for event in sorted_filtered_events[:15]:
-                        date_str = event["date"].strftime('%Y年%m月%d日')
-                        age = event["age"]
-                        score = event["normalized_score"]
-                        st.subheader(f"{date_str}頃 ({age}歳)")
-                        st.markdown(f"**重要度: {score:.0f}%**")
-                        st.progress(int(score))
+                    for event in sorted(filtered_events, key=lambda x: x['normalized_score'], reverse=True)[:15]:
+                        st.subheader(f"{event['date'].strftime('%Y年%m月%d日')}頃 ({event['age']}歳)")
+                        st.markdown(f"**重要度: {event['normalized_score']:.0f}%**")
+                        st.progress(int(event['normalized_score']))
                         with st.expander("この時期に何が起こる？ 詳細を見る"):
                             for key in event["keys"]:
-                                info = EVENT_DEFINITIONS.get(key)
-                                if info:
+                                if info := EVENT_DEFINITIONS.get(key):
                                     st.markdown(f"**▶ {info['title']}**: {info['desc']}")
                         st.write("---")
             else:
@@ -343,38 +276,32 @@ elif mode == "2人用":
         2.  **鑑定したい期間**を選択してください。
         3.  計算には複数のチャートを分析するため、**1分〜2分ほど時間がかかります。**
         """)
-
     col1, col2 = st.columns(2)
     with col1:
         st.subheader("Aさんの情報")
-        a_birth_date = st.date_input("① 生年月日", min_value=datetime.date(1940, 1, 1), max_value=datetime.date.today(), key="a_date", value=datetime.date(1990, 1, 1))
-        a_custom_time_str = st.text_input("② 出生時刻 (例: 16:27)", "12:00", key="a_time")
-        a_pref = st.selectbox("③ 出生地", options=list(PREFECTURES.keys()), index=12, key="a_pref")
+        a_birth_date = st.date_input("① 生年月日", value=datetime.date(1982, 10, 6), key="a_date")
+        a_custom_time_str = st.text_input("② 出生時刻 (例: 16:27)", "02:30", key="a_time")
+        a_pref = st.selectbox("③ 出生地", options=list(PREFECTURES.keys()), index=12, key="a_pref") # 東京都
     with col2:
         st.subheader("Bさんの情報")
-        b_birth_date = st.date_input("① 生年月日", min_value=datetime.date(1940, 1, 1), max_value=datetime.date.today(), key="b_date", value=datetime.date(1992, 5, 10))
-        b_custom_time_str = st.text_input("② 出生時刻 (例: 16:27)", "12:00", key="b_time")
-        b_pref = st.selectbox("③ 出生地", options=list(PREFECTURES.keys()), index=26, key="b_pref")
+        b_birth_date = st.date_input("① 生年月日", value=datetime.date(1976, 12, 25), key="b_date")
+        b_custom_time_str = st.text_input("② 出生時刻 (例: 16:27)", "16:25", key="b_time")
+        b_pref = st.selectbox("③ 出生地", options=list(PREFECTURES.keys()), index=46, key="b_pref") # 沖縄県
 
     st.markdown("---")
     st.markdown("#### ④ 鑑定期間（年）")
     year_col1, year_col2 = st.columns(2)
-    current_year = datetime.date.today().year
     with year_col1:
-        year_options = list(range(current_year, current_year + 51))
-        start_year = st.selectbox("開始年", options=year_options, index=0, key="start_year_2p")
+        year_options = list(range(1900, datetime.date.today().year + 51))
+        start_year = st.selectbox("開始年", options=year_options, index=year_options.index(2010), key="start_year_2p")
     with year_col2:
-        end_year_options = list(range(start_year, current_year + 51))
-        default_index = 10
-        if len(end_year_options) <= default_index:
-            default_index = len(end_year_options) - 1
-        end_year = st.selectbox("終了年", options=end_year_options, index=default_index, key="end_year_2p")
+        end_year_options = list(range(start_year, datetime.date.today().year + 51))
+        end_year = st.selectbox("終了年", options=end_year_options, index=end_year_options.index(2020), key="end_year_2p")
 
     if st.button("お二人の結婚タイミングを鑑定する", type="primary"):
         try:
             a_hour, a_minute = map(int, a_custom_time_str.split(':'))
             b_hour, b_minute = map(int, b_custom_time_str.split(':'))
-            
             jst_tz = timezone(timedelta(hours=9))
             a_birth_dt_jst = datetime.datetime(a_birth_date.year, a_birth_date.month, a_birth_date.day, a_hour, a_minute, tzinfo=jst_tz)
             a_lon, a_lat = PREFECTURES[a_pref]
@@ -384,7 +311,6 @@ elif mode == "2人用":
             with st.spinner("お二人の膨大な運勢データを解析中... (最大2分ほどかかります)"):
                 chart_a = get_natal_chart(a_birth_dt_jst, a_lon, a_lat)
                 chart_b = get_natal_chart(b_birth_dt_jst, b_lon, b_lat)
-                
                 if not (chart_a and chart_b):
                     st.error("チャートの作成に失敗しました。入力情報を確認してください。")
                 else:
@@ -395,39 +321,25 @@ elif mode == "2人用":
                     couple_events = synthesize_couple_events(events_a, events_b, events_comp)
                     
                     st.success("解析が完了しました！")
-                    
-                    # 選択された年でイベントをフィルタリング
-                    filtered_couple_events = []
-                    for event in couple_events:
-                        event_year = int(event['month'][:4])
-                        if start_year <= event_year <= end_year:
-                            filtered_couple_events.append(event)
+                    filtered_couple_events = [e for e in couple_events if start_year <= int(e['month'][:4]) <= end_year]
 
-                    # グラフ表示
                     if filtered_couple_events:
                         st.header(f"📊 お二人の結婚運勢グラフ（{start_year}年～{end_year}年）", divider="rainbow")
-                        df_couple_chart = pd.DataFrame(filtered_couple_events)
-                        df_couple_chart['year'] = pd.to_datetime(df_couple_chart['month']).dt.year
-                        couple_chart_data = df_couple_chart.groupby('year')['normalized_score'].max().reset_index()
-
-                        chart = alt.Chart(couple_chart_data).mark_line(
-                            point=alt.OverlayMarkDef(color="#F63366", size=40)
-                        ).encode(
+                        df_chart = pd.DataFrame(filtered_couple_events)
+                        df_chart['year'] = pd.to_datetime(df_chart['month']).dt.year
+                        chart_data = df_chart.groupby('year')['normalized_score'].max().reset_index()
+                        chart = alt.Chart(chart_data).mark_line(point=alt.OverlayMarkDef(color="#F63366", size=40)).encode(
                             x=alt.X('year:O', title='年', axis=alt.Axis(labelAngle=0)),
                             y=alt.Y('normalized_score:Q', title='総合重要度 (%)', scale=alt.Scale(domain=[0, 105])),
                             tooltip=[alt.Tooltip('year', title='年'), alt.Tooltip('normalized_score', title='総合重要度 (%)', format='.1f')]
-                        ).properties(
-                            title=alt.TitleParams(text='年別・お二人の結婚運のピーク', anchor='middle')
-                        ).interactive()
+                        ).properties(title=alt.TitleParams(text='年別・お二人の結婚運のピーク', anchor='middle')).interactive()
                         st.altair_chart(chart, use_container_width=True)
 
                     st.header(f"🌟 お二人の結婚運が最高潮に達する時期 TOP15（{start_year}年～{end_year}年）", divider="rainbow")
-                    
                     if not filtered_couple_events:
                         st.warning(f"選択された期間（{start_year}年～{end_year}年）に、お二人にとって重要な星の配置は見つかりませんでした。")
                     else:
-                        sorted_filtered_events = sorted(filtered_couple_events, key=lambda x: x['normalized_score'], reverse=True)
-                        for event in sorted_filtered_events[:15]:
+                        for event in sorted(filtered_couple_events, key=lambda x: x['normalized_score'], reverse=True)[:15]:
                             month_dt = datetime.datetime.strptime(event["month"], "%Y-%m")
                             age_a = month_dt.year - a_birth_date.year - ((month_dt.month, 1) < (a_birth_date.month, a_birth_date.day))
                             age_b = month_dt.year - b_birth_date.year - ((month_dt.month, 1) < (b_birth_date.month, b_birth_date.day))
@@ -437,16 +349,13 @@ elif mode == "2人用":
                             with st.expander("この時期の運勢の内訳を見る"):
                                 for person, event_keys in event['events_detail'].items():
                                     st.markdown(f"**--- {person}の運勢 ---**")
-                                    unique_keys = list(set(event_keys))
-                                    if not unique_keys:
+                                    if not (unique_keys := list(set(event_keys))):
                                         st.write("特に大きな動きはありませんでした。")
                                     else:
                                         for key in unique_keys:
-                                            info = EVENT_DEFINITIONS.get(key)
-                                            if info:
+                                            if info := EVENT_DEFINITIONS.get(key):
                                                 st.markdown(f"**▶ {info['title']}**: {info['desc']}")
                             st.write("---")
-
         except ValueError:
             st.error("時刻の入力形式が正しくありません。お二人の時刻を「時:分」（例: 16:27）の形式で入力してください。")
         except Exception as e:
