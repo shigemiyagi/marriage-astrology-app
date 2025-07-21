@@ -8,7 +8,7 @@ import traceback
 # --- 初期設定 ---
 
 # アプリのバージョン情報
-APP_VERSION = "5.0 (ハードアスペクト対応版)"
+APP_VERSION = "5.1 (UI/UX改善版)"
 
 # 1. 天文暦ファイルのパス
 swe.set_ephe_path('ephe')
@@ -22,7 +22,6 @@ PLANET_IDS = {
 }
 PLANET_NAMES = {v: k for k, v in PLANET_IDS.items()}
 
-# 修正点: ユーザーの提案に基づき、土星と天王星のチェックにハードアスペクトも使用するため定義を明確化
 MAJOR_ASPECTS = { 0: '合', 60: 'セクスタイル', 90: 'スクエア', 120: 'トライン', 180: 'オポジション' }
 GOOD_ASPECTS = { 0: '合', 60: 'セクスタイル', 120: 'トライン' }
 ORB = 1.2
@@ -39,7 +38,6 @@ RULER_OF_SIGN = {
 }
 
 # --- イベントのスコアと解説 ---
-# 修正点: ハードアスペクト採用に伴い、解説文をよりニュートラルな表現に更新
 EVENT_DEFINITIONS = {
     # トランジット (T)
     "T_JUP_7H_INGRESS": {"score": 95, "title": "T木星が第7ハウス入り", "desc": "約12年に一度の最大の結婚幸運期。出会いのチャンスが拡大し、関係がスムーズに進展しやすい1年間。"},
@@ -177,12 +175,10 @@ def find_events(_natal_chart, birth_dt, years=80):
         if check_crossing(t_pos["土星"], prev_positions['t']["土星"], _natal_chart["DSC_pos"], ORB):
             events_by_date.setdefault(current_date.date(), []).append("T_SAT_CONJ_DSC")
         
-        # T木星は吉角(GOOD_ASPECTS)のみをチェック
         for aspect in GOOD_ASPECTS:
             if check_crossing(t_pos["木星"], prev_positions['t']["木星"], (_natal_chart["金星"] + aspect) % 360, ORB): events_by_date.setdefault(current_date.date(), []).append("T_JUP_ASPECT_VENUS")
             if check_crossing(t_pos["木星"], prev_positions['t']["木星"], (_natal_chart["太陽"] + aspect) % 360, ORB): events_by_date.setdefault(current_date.date(), []).append("T_JUP_ASPECT_SUN")
         
-        # 修正点: ユーザー提案に基づき、T土星とT天王星はハードアスペクトを含む主要アスペクト(MAJOR_ASPECTS)をチェック
         for aspect in MAJOR_ASPECTS:
             if check_crossing(t_pos["土星"], prev_positions['t']["土星"], (_natal_chart["金星"] + aspect) % 360, ORB): events_by_date.setdefault(current_date.date(), []).append("T_SAT_ASPECT_VENUS")
             if check_crossing(t_pos["天王星"], prev_positions['t']["天王星"], (_natal_chart["金星"] + aspect) % 360, ORB): events_by_date.setdefault(current_date.date(), []).append("T_URA_ASPECT_VENUS")
@@ -230,42 +226,45 @@ def find_events(_natal_chart, birth_dt, years=80):
 st.set_page_config(page_title="結婚タイミング占い【PRO】", page_icon="💖")
 st.title("💖 結婚タイミング占い【PRO版】")
 
-# アプリのバージョン情報を表示
 st.info(f"アプリバージョン: {APP_VERSION}")
 
 st.write("トランジット、プログレス、ソーラーアークの3技法を統合し、あなたの結婚運がピークに達する時期をスコア化して予測します。")
 
 with st.expander("使い方と注意点"):
+    # 修正点: Markdownの表示崩れを修正
     st.markdown("""
     1.  **生年月日、出生時刻、出生地**を入力してください。
     2.  出生時刻が正確であるほど、プログレスやソーラーアークの精度が上がります。不明な場合は「12:00」で計算します。
     3.  「鑑定開始」ボタンを押すと、複数の技法を横断的に計算するため、**30秒〜1分ほど時間がかかります。**
     ---
     **【重要】**
-    * 表示される**重要度(%)**は、鑑定期間内で最も可能性の高い時期を100%とした相対的なものです。
+    * 表示される**重要度（%）**は、鑑定期間内で最も可能性の高い時期を100%とした相対的なものです。
     * スコアが高い日付は、複数の幸運な星回りが重なっていることを示します。その日付自体だけでなく、**その周辺の数ヶ月**がチャンスの期間となります。
     * これはあくまで占星術的な可能性の指標であり、未来を保証するものではありません。
     """)
 
+# 修正点: デフォルト値を変更
 col1, col2 = st.columns(2)
 with col1:
-    birth_date = st.date_input("① 生年月日", min_value=datetime.date(1940, 1, 1), max_value=datetime.date.today(), value=datetime.date(1990, 1, 1))
+    birth_date = st.date_input("① 生年月日", min_value=datetime.date(1940, 1, 1), max_value=datetime.date.today(), value=datetime.date(1982, 10, 6))
 with col2:
-    pref = st.selectbox("③ 出生地（都道府県）", options=list(PREFECTURES.keys()), index=12)
+    pref_options = list(PREFECTURES.keys())
+    tokyo_index = pref_options.index("東京都")
+    pref = st.selectbox("③ 出生地（都道府県）", options=pref_options, index=tokyo_index)
 
-time_input_method = st.radio("② 出生時刻の入力方法", ["ドロップダウンから選択", "詳細時刻を入力", "不明"], index=0)
-hour, minute = 12, 0
+time_input_method = st.radio("② 出生時刻の入力方法", ["ドロップダウンから選択", "詳細時刻を入力", "不明"], index=1)
+hour, minute = 2, 30
 
 if time_input_method == "ドロップダウンから選択":
-    selected_time = st.selectbox("出生時刻（24時間表記）", options=[f"{h:02d}:00" for h in range(24)], index=12)
+    selected_time = st.selectbox("出生時刻（24時間表記）", options=[f"{h:02d}:00" for h in range(24)], index=2)
     hour, minute = map(int, selected_time.split(':'))
 elif time_input_method == "詳細時刻を入力":
-    custom_time_str = st.text_input("詳細な時刻を入力 (例: 16:27)", "12:00")
+    custom_time_str = st.text_input("詳細な時刻を入力 (例: 16:27)", "02:30")
     try:
         hour, minute = map(int, custom_time_str.split(':'))
     except ValueError:
         st.warning("時刻は「時:分」の形式で入力してください。例: 16:27")
-        hour, minute = 12, 0
+        hour, minute = 2, 30
 else:
     hour, minute = 12, 0
     st.info("出生時刻が不明なため、正午(12:00)で計算します。月の位置やASC/MCの精度が若干低下します。")
@@ -288,12 +287,21 @@ if st.button("鑑定開始", type="primary"):
                 all_events = find_events(natal_chart, birth_dt_jst, years=80)
                 st.success("計算が完了しました！")
                 st.header("🌟 あなたの人生における結婚運のピーク TOP15", divider="rainbow")
-                if not all_events:
-                    st.warning("鑑定期間内に、指定された重要な天体の配置は見つかりませんでした。")
+                
+                # 修正点: 結果表示の際に年齢でフィルタリング
+                filtered_events = []
+                for event in all_events:
+                    age = event["date"].year - birth_date.year - ((event["date"].month, event["date"].day) < (birth_date.month, birth_date.day))
+                    if 18 <= age < 70:
+                        event['age'] = age # 後で使えるように年齢をeventに追加
+                        filtered_events.append(event)
+
+                if not filtered_events:
+                    st.warning("鑑定期間内（18歳～69歳）に、指定された重要な天体の配置は見つかりませんでした。")
                 else:
-                    for event in all_events[:15]:
+                    for event in filtered_events[:15]:
                         date_str = event["date"].strftime('%Y年%m月%d日')
-                        age = event["date"].year - birth_date.year - ((event["date"].month, event["date"].day) < (birth_date.month, birth_date.day))
+                        age = event["age"]
                         score = event["normalized_score"]
                         st.subheader(f"{date_str}頃 ({age}歳)")
                         st.markdown(f"**重要度: {score:.0f}%**")
