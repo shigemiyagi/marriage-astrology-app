@@ -8,7 +8,7 @@ import traceback
 # --- 初期設定 ---
 
 # アプリのバージョン情報
-APP_VERSION = "4.0 (バグ修正版)"
+APP_VERSION = "5.0 (ハードアスペクト対応版)"
 
 # 1. 天文暦ファイルのパス
 swe.set_ephe_path('ephe')
@@ -22,6 +22,7 @@ PLANET_IDS = {
 }
 PLANET_NAMES = {v: k for k, v in PLANET_IDS.items()}
 
+# 修正点: ユーザーの提案に基づき、土星と天王星のチェックにハードアスペクトも使用するため定義を明確化
 MAJOR_ASPECTS = { 0: '合', 60: 'セクスタイル', 90: 'スクエア', 120: 'トライン', 180: 'オポジション' }
 GOOD_ASPECTS = { 0: '合', 60: 'セクスタイル', 120: 'トライン' }
 ORB = 1.2
@@ -38,6 +39,7 @@ RULER_OF_SIGN = {
 }
 
 # --- イベントのスコアと解説 ---
+# 修正点: ハードアスペクト採用に伴い、解説文をよりニュートラルな表現に更新
 EVENT_DEFINITIONS = {
     # トランジット (T)
     "T_JUP_7H_INGRESS": {"score": 95, "title": "T木星が第7ハウス入り", "desc": "約12年に一度の最大の結婚幸運期。出会いのチャンスが拡大し、関係がスムーズに進展しやすい1年間。"},
@@ -46,8 +48,8 @@ EVENT_DEFINITIONS = {
     "T_JUP_ASPECT_VENUS": {"score": 80, "title": "T木星がN金星に吉角", "desc": "恋愛運が最高潮に。人生を楽しむ喜びにあふれ、幸せな恋愛・結婚に繋がりやすい。"},
     "T_JUP_ASPECT_SUN": {"score": 75, "title": "T木星がN太陽に吉角", "desc": "人生の発展期。自己肯定感が高まり、良きパートナーを引き寄せ、人生のステージが上がる。"},
     "T_SAT_CONJ_DSC": {"score": 85, "title": "T土星とNディセンダントが合", "desc": "運命的な相手との関係が始まり、長期的な契約を結ぶ時。結婚への決意が固まる。"},
-    "T_SAT_ASPECT_VENUS": {"score": 70, "title": "T土星がN金星に吉角", "desc": "恋愛関係が安定し、誠実なパートナーシップを築く。関係が真剣なものへと進む。"},
-    "T_URA_ASPECT_VENUS": {"score": 75, "title": "T天王星がN金星に吉角", "desc": "突然の出会いや電撃的な恋愛の始まり。今までにないタイプの人に強く惹かれるかも。"},
+    "T_SAT_ASPECT_VENUS": {"score": 70, "title": "T土星がN金星にアスペクト", "desc": "恋愛関係に試練や責任が伴うが、それを乗り越えることで関係が安定し、真剣なものへと進む。結婚への覚悟を固める時期。"},
+    "T_URA_ASPECT_VENUS": {"score": 75, "title": "T天王星がN金星にアスペクト", "desc": "突然の出会いや電撃的な恋愛、または現在の関係に変化が訪れる。今までにないタイプの人に強く惹かれ、関係性が大きく動く可能性。"},
     # ソーラーアーク (SA)
     "SA_ASC_CONJ_VENUS": {"score": 90, "title": "SA ASCがN金星に合", "desc": "自分自身が愛のエネルギーに満ち、魅力が高まる時期。恋愛や結婚の大きなチャンス。"},
     "SA_MC_CONJ_VENUS": {"score": 85, "title": "SA MCがN金星に合", "desc": "恋愛や結婚が社会的なステータスアップに繋がる可能性。公に認められる喜び。"},
@@ -88,16 +90,13 @@ def get_natal_chart(birth_dt_jst, lon, lat):
     """出生時の天体情報（ネイタルチャート）を計算して辞書として返す"""
     dt_utc = birth_dt_jst.astimezone(timezone.utc)
     
-    # --- 修正点 ---
-    # swe.utc_to_jd が decimal hour 形式でエラーを起こす問題に対処。
-    # 時、分、秒を個別の引数として渡す、より堅牢な方法に変更します。
     year = dt_utc.year
     month = dt_utc.month
     day = dt_utc.day
     hour = dt_utc.hour
     minute = dt_utc.minute
-    second = float(dt_utc.second) # 秒は浮動小数点数である必要があります
-    gregflag = 1 # グレゴリオ暦
+    second = float(dt_utc.second)
+    gregflag = 1
     
     jday_tuple = swe.utc_to_jd(year, month, day, hour, minute, second, gregflag)
     jday = jday_tuple[1]
@@ -177,11 +176,17 @@ def find_events(_natal_chart, birth_dt, years=80):
             events_by_date.setdefault(current_date.date(), []).append("T_JUP_CONJ_DSC")
         if check_crossing(t_pos["土星"], prev_positions['t']["土星"], _natal_chart["DSC_pos"], ORB):
             events_by_date.setdefault(current_date.date(), []).append("T_SAT_CONJ_DSC")
+        
+        # T木星は吉角(GOOD_ASPECTS)のみをチェック
         for aspect in GOOD_ASPECTS:
             if check_crossing(t_pos["木星"], prev_positions['t']["木星"], (_natal_chart["金星"] + aspect) % 360, ORB): events_by_date.setdefault(current_date.date(), []).append("T_JUP_ASPECT_VENUS")
             if check_crossing(t_pos["木星"], prev_positions['t']["木星"], (_natal_chart["太陽"] + aspect) % 360, ORB): events_by_date.setdefault(current_date.date(), []).append("T_JUP_ASPECT_SUN")
+        
+        # 修正点: ユーザー提案に基づき、T土星とT天王星はハードアスペクトを含む主要アスペクト(MAJOR_ASPECTS)をチェック
+        for aspect in MAJOR_ASPECTS:
             if check_crossing(t_pos["土星"], prev_positions['t']["土星"], (_natal_chart["金星"] + aspect) % 360, ORB): events_by_date.setdefault(current_date.date(), []).append("T_SAT_ASPECT_VENUS")
             if check_crossing(t_pos["天王星"], prev_positions['t']["天王星"], (_natal_chart["金星"] + aspect) % 360, ORB): events_by_date.setdefault(current_date.date(), []).append("T_URA_ASPECT_VENUS")
+        
         if "ASC_pos" in sa_pos and "金星" in _natal_chart:
             if check_crossing(sa_pos["ASC_pos"], prev_positions['sa']["ASC_pos"], _natal_chart["金星"], ORB): events_by_date.setdefault(current_date.date(), []).append("SA_ASC_CONJ_VENUS")
         if "MC_pos" in sa_pos and "金星" in _natal_chart:
@@ -304,4 +309,3 @@ if st.button("鑑定開始", type="primary"):
     except Exception as e:
         st.error(f"予期せぬエラーが発生しました: {e}")
         st.error("入力値が正しいか、または天文暦ファイル(`ephe`フォルダ)が正しく配置されているか確認してください。")
-
