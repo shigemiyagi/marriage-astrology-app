@@ -10,7 +10,7 @@ import altair as alt
 # --- 初期設定 ---
 
 # アプリのバージョン情報
-APP_VERSION = "6.1 (グラフ改善版)"
+APP_VERSION = "6.2 (グラフ平滑化改善版)"
 
 # 1. 天文暦ファイルのパス
 swe.set_ephe_path('ephe')
@@ -307,30 +307,33 @@ if st.button("鑑定開始", type="primary"):
                         ]
                     )
                     
-                    # 修正点: 棒グラフからスムージング折れ線グラフに変更
-                    base = alt.Chart(chart_data).encode(
-                        x=alt.X('年齢:Q', title='年齢', axis=alt.Axis(tickMinStep=1, grid=False)),
-                        tooltip=[alt.Tooltip('年齢', title='年齢'), alt.Tooltip('重要度(%)', title='重要度 (%)', format='.0f'), alt.Tooltip('時期', title='時期')]
-                    ).properties(
-                        title='年齢別 結婚運の推移'
-                    )
-
-                    line = base.mark_line(
-                        interpolate='monotone', # この行で線を滑らかにします
-                        color='salmon'
-                    ).encode(
-                        y=alt.Y('重要度(%):Q', title='重要度 (%)', scale=alt.Scale(domain=[0, 105]))
-                    )
-
-                    points = base.mark_point(
+                    # 修正点: LOESS回帰を用いて、より滑らかなトレンド曲線を描画
+                    # 個々のピーク（点）と、全体の大きな流れ（線）を同時に表示
+                    
+                    # ピークを示す点グラフ
+                    points = alt.Chart(chart_data).mark_point(
                         size=80,
                         filled=True,
                         color='darkred'
                     ).encode(
-                        y=alt.Y('重要度(%):Q', title='重要度 (%)')
+                        x=alt.X('年齢:Q', title='年齢', axis=alt.Axis(tickMinStep=1, grid=False)),
+                        y=alt.Y('重要度(%):Q', title='重要度 (%)', scale=alt.Scale(domain=[0, 105])),
+                        tooltip=[alt.Tooltip('年齢', title='年齢'), alt.Tooltip('重要度(%)', title='重要度 (%)', format='.0f'), alt.Tooltip('時期', title='時期')]
                     )
 
-                    chart = (line + points).configure_axis(
+                    # LOESSによる平滑化曲線
+                    loess_line = points.transform_loess(
+                        '年齢',
+                        '重要度(%)',
+                        bandwidth=0.4 # この値で滑らかさを調整 (0.1〜1.0)
+                    ).mark_line(
+                        color='salmon',
+                        strokeWidth=3
+                    )
+                    
+                    chart = (loess_line + points).properties(
+                        title='年齢別 結婚運の推移'
+                    ).configure_axis(
                         labelFontSize=12,
                         titleFontSize=14
                     ).configure_title(
