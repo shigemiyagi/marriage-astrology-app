@@ -3,12 +3,12 @@ import swisseph as swe
 import datetime
 from datetime import timezone, timedelta
 import math
-import traceback # エラー診断のためにtracebackモジュールをインポート
+import traceback
 
 # --- 初期設定 ---
 
-# アプリのバージョン情報（診断用）
-APP_VERSION = "3.0 (診断機能付き)"
+# アプリのバージョン情報
+APP_VERSION = "4.0 (バグ修正版)"
 
 # 1. 天文暦ファイルのパス
 swe.set_ephe_path('ephe')
@@ -87,7 +87,20 @@ PREFECTURES = {
 def get_natal_chart(birth_dt_jst, lon, lat):
     """出生時の天体情報（ネイタルチャート）を計算して辞書として返す"""
     dt_utc = birth_dt_jst.astimezone(timezone.utc)
-    jday = swe.utc_to_jd(dt_utc.year, dt_utc.month, dt_utc.day, dt_utc.hour + dt_utc.minute / 60.0, 1)[1]
+    
+    # --- 修正点 ---
+    # swe.utc_to_jd が decimal hour 形式でエラーを起こす問題に対処。
+    # 時、分、秒を個別の引数として渡す、より堅牢な方法に変更します。
+    year = dt_utc.year
+    month = dt_utc.month
+    day = dt_utc.day
+    hour = dt_utc.hour
+    minute = dt_utc.minute
+    second = float(dt_utc.second) # 秒は浮動小数点数である必要があります
+    gregflag = 1 # グレゴリオ暦
+    
+    jday_tuple = swe.utc_to_jd(year, month, day, hour, minute, second, gregflag)
+    jday = jday_tuple[1]
     
     chart_data = {"jday": jday, "lon": lon, "lat": lat}
     
@@ -212,7 +225,7 @@ def find_events(_natal_chart, birth_dt, years=80):
 st.set_page_config(page_title="結婚タイミング占い【PRO】", page_icon="💖")
 st.title("💖 結婚タイミング占い【PRO版】")
 
-# 診断用のバージョン情報を表示
+# アプリのバージョン情報を表示
 st.info(f"アプリバージョン: {APP_VERSION}")
 
 st.write("トランジット、プログレス、ソーラーアークの3技法を統合し、あなたの結婚運がピークに達する時期をスコア化して予測します。")
@@ -289,14 +302,6 @@ if st.button("鑑定開始", type="primary"):
                         st.write("---")
 
     except Exception as e:
-        # --- ここからが診断機能 ---
         st.error(f"予期せぬエラーが発生しました: {e}")
         st.error("入力値が正しいか、または天文暦ファイル(`ephe`フォルダ)が正しく配置されているか確認してください。")
-        
-        st.subheader("👨‍⚕️ 開発者向け診断情報", divider="red")
-        st.warning("このアプリでエラーが解決しない場合、以下の情報を開発者に伝えると問題解決が早まる可能性があります。")
-        
-        # エラーが発生した箇所の詳細なトレースバック情報を取得して表示
-        tb_str = traceback.format_exc()
-        st.code(tb_str, language="text")
 
