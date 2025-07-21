@@ -8,7 +8,7 @@ from collections import defaultdict
 import traceback
 
 # --- 初期設定 ---
-APP_VERSION = "8.4 (1人用モード グラフ表示機能追加)"
+APP_VERSION = "8.5 (2人用モード グラフ・期間選択機能追加)"
 swe.set_ephe_path('ephe')
 
 # --- 定数定義 ---
@@ -65,6 +65,7 @@ PREFECTURES = {
 
 # --- 計算ロジック関数 ---
 
+@st.cache_data
 def get_natal_chart(birth_dt_jst, lon, lat):
     dt_utc = birth_dt_jst.astimezone(timezone.utc)
     year, month, day = dt_utc.year, dt_utc.month, dt_utc.day
@@ -76,12 +77,13 @@ def get_natal_chart(birth_dt_jst, lon, lat):
     try:
         cusps, ascmc = swe.houses(jday, lat, lon, b'P')
     except Exception:
-        st.error("ハウス計算に失敗しました。出生時刻や場所が有効か確認してください。")
+        # エラーメッセージはUI側で表示するため、ここではNoneを返す
         return None
         
     chart_data["ASC_pos"] = float(ascmc[0])
     chart_data["MC_pos"] = float(ascmc[1])
     
+    # ... (以降のチャート計算は変更なし) ...
     temp_planet_ids = PLANET_IDS.copy()
     temp_planet_ids.update({"ASC": swe.ASC, "MC": swe.MC})
     
@@ -107,6 +109,7 @@ def calculate_midpoint(p1, p2):
     diff = (p2 - p1 + 360) % 360
     return (p1 + diff / 2) % 360 if diff <= 180 else (p2 + (360 - diff) / 2) % 360
 
+@st.cache_data
 def create_composite_chart(chart_a, chart_b):
     composite_chart = {"lon": chart_a["lon"], "lat": chart_a["lat"]}
     
@@ -162,7 +165,7 @@ def find_events(_natal_chart, birth_dt, years=80, is_composite=False):
             norm_prev = (prev_pos - cusp_pos + 360) % 360
             return norm_prev > 350 and norm_curr < 10
 
-        # --- イベントチェック (省略) ---
+        # --- イベントチェック (ロジックは変更ないため、コードは省略) ---
         if check_ingress(t_pos["木星"], prev_positions['t']["木星"], _natal_chart["cusps"][6]): events_by_date.setdefault(current_date.date(), []).append("T_JUP_7H_INGRESS")
         if check_ingress(t_pos["土星"], prev_positions['t']["土星"], _natal_chart["cusps"][6]): events_by_date.setdefault(current_date.date(), []).append("T_SAT_7H_INGRESS")
         if check_crossing(t_pos["木星"], prev_positions['t']["木星"], _natal_chart["DSC_pos"], ORB): events_by_date.setdefault(current_date.date(), []).append("T_JUP_CONJ_DSC")
@@ -185,9 +188,9 @@ def find_events(_natal_chart, birth_dt, years=80, is_composite=False):
             if check_crossing(sa_pos["7H_Ruler_pos"], prev_positions['sa'].get("7H_Ruler_pos", 0), _natal_chart["ASC_pos"], ORB): events_by_date.setdefault(current_date.date(), []).append("SA_7Ruler_CONJ_ASC_DSC")
             if check_crossing(sa_pos["7H_Ruler_pos"], prev_positions['sa'].get("7H_Ruler_pos", 0), _natal_chart["DSC_pos"], ORB): events_by_date.setdefault(current_date.date(), []).append("SA_7Ruler_CONJ_ASC_DSC")
         if check_ingress(p_pos["月"], prev_positions['p']["月"], _natal_chart["cusps"][6]): events_by_date.setdefault(current_date.date(), []).append("P_MOON_7H_INGRESS")
-        if check_crossing(p_pos["月"], prev_positions['p']["月"], _natal_chart["木星"], ORB): events_by_date.setdefault(current_date.date(), []).append("P_MOON_CONJ_JUP")
-        if check_crossing(p_pos["月"], prev_positions['p']["月"], _natal_chart["金星"], ORB): events_by_date.setdefault(current_date.date(), []).append("P_MOON_CONJ_VENUS")
-        if "火星" in _natal_chart:
+        if "木星" in _natal_chart and check_crossing(p_pos["月"], prev_positions['p']["月"], _natal_chart["木星"], ORB): events_by_date.setdefault(current_date.date(), []).append("P_MOON_CONJ_JUP")
+        if "金星" in _natal_chart and check_crossing(p_pos["月"], prev_positions['p']["月"], _natal_chart["金星"], ORB): events_by_date.setdefault(current_date.date(), []).append("P_MOON_CONJ_VENUS")
+        if "火星" in _natal_chart and "金星" in p_pos:
             for aspect in MAJOR_ASPECTS:
                 if check_crossing(p_pos["金星"], prev_positions['p']["金星"], (_natal_chart["火星"] + aspect) % 360, ORB): events_by_date.setdefault(current_date.date(), []).append("P_VENUS_ASPECT_MARS")
 
@@ -268,10 +271,9 @@ if mode == "1人用":
         start_age = st.selectbox("開始年齢", options=age_options, index=7, key="start_age_1p") # デフォルト25歳
     with age_col2:
         end_age_options = list(range(start_age, 81))
-        #終了年齢のデフォルト値が開始年齢より小さくならないように調整
         default_end_age_index = 20
         if len(end_age_options) <= default_end_age_index:
-            default_end_age_index = len(end_age_options) -1
+            default_end_age_index = len(end_age_options) - 1
         end_age = st.selectbox("終了年齢", options=end_age_options, index=default_end_age_index, key="end_age_1p") 
 
     if st.button("鑑定開始", type="primary"):
@@ -293,10 +295,8 @@ if mode == "1人用":
 
                 st.success("計算が完了しました！")
 
-                # ▼▼▼ グラフ表示機能を追加 ▼▼▼
                 if filtered_events:
                     st.header(f"📊 結婚運勢グラフ（{start_age}歳～{end_age}歳）", divider="rainbow")
-                    
                     df_for_chart = pd.DataFrame(filtered_events)
                     chart_data = df_for_chart.groupby('age')['normalized_score'].max().reset_index()
 
@@ -305,18 +305,11 @@ if mode == "1人用":
                     ).encode(
                         x=alt.X('age:Q', title='年齢', scale=alt.Scale(zero=False, domain=[start_age, end_age])),
                         y=alt.Y('normalized_score:Q', title='重要度 (%)', scale=alt.Scale(domain=[0, 105])),
-                        tooltip=[
-                            alt.Tooltip('age', title='年齢'),
-                            alt.Tooltip('normalized_score', title='重要度 (%)', format='.1f')
-                        ]
+                        tooltip=[alt.Tooltip('age', title='年齢'), alt.Tooltip('normalized_score', title='重要度 (%)', format='.1f')]
                     ).properties(
-                        title=alt.TitleParams(
-                            text='年齢別・結婚運のピーク',
-                            anchor='middle'
-                        )
+                        title=alt.TitleParams(text='年齢別・結婚運のピーク', anchor='middle')
                     ).interactive()
                     st.altair_chart(chart, use_container_width=True)
-                # ▲▲▲ グラフ表示機能ここまで ▲▲▲
 
                 st.header(f"🌟 あなたの結婚運のピーク TOP15（{start_age}歳～{end_age}歳）", divider="rainbow")
                 
@@ -337,6 +330,8 @@ if mode == "1人用":
                                 if info:
                                     st.markdown(f"**▶ {info['title']}**: {info['desc']}")
                         st.write("---")
+            else:
+                st.error("チャートの作成に失敗しました。入力情報を確認してください。")
 
 # --- 2人用モード ---
 elif mode == "2人用":
@@ -345,7 +340,8 @@ elif mode == "2人用":
     with st.expander("使い方と注意点（2人用）", expanded=True):
         st.markdown("""
         1.  **お二人それぞれ**の生年月日、出生時刻、出生地を入力してください。
-        2.  計算には複数のチャートを分析するため、**1分〜2分ほど時間がかかります。**
+        2.  **鑑定したい期間**を選択してください。
+        3.  計算には複数のチャートを分析するため、**1分〜2分ほど時間がかかります。**
         """)
 
     col1, col2 = st.columns(2)
@@ -360,9 +356,22 @@ elif mode == "2人用":
         b_custom_time_str = st.text_input("② 出生時刻 (例: 16:27)", "12:00", key="b_time")
         b_pref = st.selectbox("③ 出生地", options=list(PREFECTURES.keys()), index=26, key="b_pref")
 
+    st.markdown("---")
+    st.markdown("#### ④ 鑑定期間（年）")
+    year_col1, year_col2 = st.columns(2)
+    current_year = datetime.date.today().year
+    with year_col1:
+        year_options = list(range(current_year, current_year + 51))
+        start_year = st.selectbox("開始年", options=year_options, index=0, key="start_year_2p")
+    with year_col2:
+        end_year_options = list(range(start_year, current_year + 51))
+        default_index = 10
+        if len(end_year_options) <= default_index:
+            default_index = len(end_year_options) - 1
+        end_year = st.selectbox("終了年", options=end_year_options, index=default_index, key="end_year_2p")
+
     if st.button("お二人の結婚タイミングを鑑定する", type="primary"):
         try:
-            # --- データ処理 (入力検証など) ---
             a_hour, a_minute = map(int, a_custom_time_str.split(':'))
             b_hour, b_minute = map(int, b_custom_time_str.split(':'))
             
@@ -375,7 +384,10 @@ elif mode == "2人用":
             with st.spinner("お二人の膨大な運勢データを解析中... (最大2分ほどかかります)"):
                 chart_a = get_natal_chart(a_birth_dt_jst, a_lon, a_lat)
                 chart_b = get_natal_chart(b_birth_dt_jst, b_lon, b_lat)
-                if chart_a and chart_b:
+                
+                if not (chart_a and chart_b):
+                    st.error("チャートの作成に失敗しました。入力情報を確認してください。")
+                else:
                     composite_chart = create_composite_chart(chart_a, chart_b)
                     events_a = find_events(chart_a, a_birth_dt_jst)
                     events_b = find_events(chart_b, b_birth_dt_jst)
@@ -384,13 +396,39 @@ elif mode == "2人用":
                     
                     st.success("解析が完了しました！")
                     
-                    if not couple_events:
-                        st.warning("鑑定期間内に、お二人にとって重要な星の配置は見つかりませんでした。")
+                    # 選択された年でイベントをフィルタリング
+                    filtered_couple_events = []
+                    for event in couple_events:
+                        event_year = int(event['month'][:4])
+                        if start_year <= event_year <= end_year:
+                            filtered_couple_events.append(event)
+
+                    # グラフ表示
+                    if filtered_couple_events:
+                        st.header(f"📊 お二人の結婚運勢グラフ（{start_year}年～{end_year}年）", divider="rainbow")
+                        df_couple_chart = pd.DataFrame(filtered_couple_events)
+                        df_couple_chart['year'] = pd.to_datetime(df_couple_chart['month']).dt.year
+                        couple_chart_data = df_couple_chart.groupby('year')['normalized_score'].max().reset_index()
+
+                        chart = alt.Chart(couple_chart_data).mark_line(
+                            point=alt.OverlayMarkDef(color="#F63366", size=40)
+                        ).encode(
+                            x=alt.X('year:O', title='年', axis=alt.Axis(labelAngle=0)),
+                            y=alt.Y('normalized_score:Q', title='総合重要度 (%)', scale=alt.Scale(domain=[0, 105])),
+                            tooltip=[alt.Tooltip('year', title='年'), alt.Tooltip('normalized_score', title='総合重要度 (%)', format='.1f')]
+                        ).properties(
+                            title=alt.TitleParams(text='年別・お二人の結婚運のピーク', anchor='middle')
+                        ).interactive()
+                        st.altair_chart(chart, use_container_width=True)
+
+                    st.header(f"🌟 お二人の結婚運が最高潮に達する時期 TOP15（{start_year}年～{end_year}年）", divider="rainbow")
+                    
+                    if not filtered_couple_events:
+                        st.warning(f"選択された期間（{start_year}年～{end_year}年）に、お二人にとって重要な星の配置は見つかりませんでした。")
                     else:
-                        st.header("🌟 お二人の結婚運が最高潮に達する時期 TOP15", divider="rainbow")
-                        for event in couple_events[:15]:
+                        sorted_filtered_events = sorted(filtered_couple_events, key=lambda x: x['normalized_score'], reverse=True)
+                        for event in sorted_filtered_events[:15]:
                             month_dt = datetime.datetime.strptime(event["month"], "%Y-%m")
-                            # --- 正確な満年齢計算 ---
                             age_a = month_dt.year - a_birth_date.year - ((month_dt.month, 1) < (a_birth_date.month, a_birth_date.day))
                             age_b = month_dt.year - b_birth_date.year - ((month_dt.month, 1) < (b_birth_date.month, b_birth_date.day))
                             st.subheader(f"{month_dt.strftime('%Y年%m月')}頃 (Aさん: {age_a}歳 / Bさん: {age_b}歳)")
