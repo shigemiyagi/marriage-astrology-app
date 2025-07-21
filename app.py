@@ -8,7 +8,7 @@ from collections import defaultdict
 import traceback
 
 # --- 初期設定 ---
-APP_VERSION = "8.7 (構文エラー修正版)"
+APP_VERSION = "9.0 (占術ロジック強化版)"
 swe.set_ephe_path('ephe')
 
 # --- 定数定義 ---
@@ -29,23 +29,35 @@ RULER_OF_SIGN = {
     "水瓶座": "土星", "魚座": "木星"
 }
 EVENT_DEFINITIONS = {
+    # 既存のイベント定義
     "T_JUP_7H_INGRESS": {"score": 95, "title": "T木星が第7ハウス入り", "desc": "約12年に一度の最大の結婚幸運期。出会いのチャンスが拡大し、関係がスムーズに進展しやすい1年間。"},
     "T_SAT_7H_INGRESS": {"score": 90, "title": "T土星が第7ハウス入り", "desc": "パートナーシップに対する責任感が生まれ、関係を真剣に考える時期。結婚を固めるタイミング。"},
     "T_JUP_CONJ_DSC": {"score": 90, "title": "T木星とNディセンダントが合", "desc": "素晴らしいパートナーとの出会いや、現在の関係が結婚へと発展する絶好のチャンス。"},
-    "T_JUP_ASPECT_VENUS": {"score": 80, "title": "T木星がN金星に吉角", "desc": "恋愛運が最高潮に。人生を楽しむ喜びにあふれ、幸せな恋愛・結婚に繋がりやすい。"},
-    "T_JUP_ASPECT_SUN": {"score": 75, "title": "T木星がN太陽に吉角", "desc": "人生の発展期。自己肯定感が高まり、良きパートナーを引き寄せ、人生のステージが上がる。"},
-    "T_SAT_CONJ_DSC": {"score": 85, "title": "T土星とNディセンダントが合", "desc": "運命的な相手との関係が始まり、長期的な契約を結ぶ時。結婚への決意が固まる。"},
-    "T_SAT_ASPECT_VENUS": {"score": 70, "title": "T土星がN金星にアスペクト", "desc": "恋愛関係に試練や責任が伴うが、それを乗り越えることで関係が安定し、真剣なものへと進む。結婚への覚悟を固める時期。"},
-    "T_URA_ASPECT_VENUS": {"score": 75, "title": "T天王星がN金星にアスペクト", "desc": "突然の出会いや電撃的な恋愛、または現在の関係に変化が訪れる。今までにないタイプの人に強く惹かれ、関係性が大きく動く可能性。"},
-    "SA_ASC_CONJ_VENUS": {"score": 90, "title": "SA ASCがN金星に合", "desc": "自分自身が愛のエネルギーに満ち、魅力が高まる時期。恋愛や結婚の大きなチャンス。"},
-    "SA_MC_CONJ_VENUS": {"score": 85, "title": "SA MCがN金星に合", "desc": "恋愛や結婚が社会的なステータスアップに繋がる可能性。公に認められる喜び。"},
-    "SA_VENUS_CONJ_ASC": {"score": 88, "title": "SA金星がN ASCに合", "desc": "愛される喜びを実感する時。人生の新しい扉が開き、パートナーシップが始まる。"},
-    "SA_JUP_CONJ_ASC": {"score": 85, "title": "SA木星がN ASCに合", "desc": "人生における大きな幸運期。拡大と発展のエネルギーが自分に降り注ぐ。"},
     "SA_7Ruler_CONJ_ASC_DSC": {"score": 95, "title": "SA 7H支配星がN ASC/DSCに合", "desc": "結婚の運命を司る星が「自分」か「パートナー」の感受点に重なる、極めて重要な時期。"},
+    "SA_ASC_CONJ_VENUS": {"score": 90, "title": "SA ASCがN金星に合", "desc": "自分自身が愛のエネルギーに満ち、魅力が高まる時期。恋愛や結婚の大きなチャンス。"},
+
+    # ▼▼▼ 新規追加のイベント定義 ▼▼▼
+    "P_MOON_CONJ_SMMidpoint": {"score": 90, "title": "P月がN太陽/月ミッドポイントに合", "desc": "感情（P月）が、公私の統合を象徴する感受点に到達。結婚など、人生の重要なパートナーシップが具体化する時です。"},
+    "P_VENUS_CONJ_DSC": {"score": 88, "title": "P金星がNディセンダントに合", "desc": "あなたの愛と喜び（P金星）がパートナーシップの扉（DSC）を開く時。恋愛の成就や結婚の絶好の機会です。"},
+    "SA_VENUS_CONJ_ASC": {"score": 88, "title": "SA金星がN ASCに合", "desc": "愛される喜びを実感する時。人生の新しい扉が開き、パートナーシップが始まる。"},
+    "T_SAT_CONJ_DSC": {"score": 85, "title": "T土星とNディセンダントが合", "desc": "運命的な相手との関係が始まり、長期的な契約を結ぶ時。結婚への決意が固まる。"},
+    "SA_MC_CONJ_VENUS": {"score": 85, "title": "SA MCがN金星に合", "desc": "恋愛や結婚が社会的なステータスアップに繋がる可能性。公に認められる喜び。"},
+    "SA_JUP_CONJ_ASC": {"score": 85, "title": "SA木星がN ASCに合", "desc": "人生における大きな幸運期。拡大と発展のエネルギーが自分に降り注ぐ。"},
+    "SA_MC_CONJ_SUN": {"score": 85, "title": "SA MCがN太陽に合", "desc": "社会的頂点（MC）と人生の目的（太陽）が重なります。結婚が社会的なステータスを向上させるなど、人生の大きな節目となる時期。"},
+    "SA_VENUS_CONJ_MOON": {"score": 85, "title": "SA金星がN月に合", "desc": "愛情（金星）と感情（月）が結びつく、結婚に非常に繋がりやすい時期。プライベートな幸福感が高まります。"},
+    # ▲▲▲ ここまで新規追加 ▲▲▲
+
+    "T_JUP_ASPECT_VENUS": {"score": 80, "title": "T木星がN金星に吉角", "desc": "恋愛運が最高潮に。人生を楽しむ喜びにあふれ、幸せな恋愛・結婚に繋がりやすい。"},
+    "P_VENUS_ASPECT_MARS": {"score": 80, "title": "P金星がN火星にアスペクト", "desc": "愛情と情熱が結びつき、ロマンスが燃え上がる強力な配置。関係が急速に進展しやすい。"},
     "P_MOON_7H_INGRESS": {"score": 80, "title": "P月が第7ハウス入り", "desc": "約2.5年間、結婚やパートナーへの意識が自然と高まる。心がパートナーを求める時期。"},
-    "P_MOON_CONJ_JUP": {"score": 70, "title": "P月がN木星に合", "desc": "精神的に満たされ、幸福感が高まる。楽観的な気持ちが良縁を引き寄せる。"},
+    "T_JUP_CONJ_SMMidpoint": {"score": 80, "title": "T木星がN太陽/月ミッドポイントに合", "desc": "幸運の星・木星が、あなたにとって最も重要な感受点を祝福。素晴らしい出会いや関係の発展が期待できる幸運期。"},
+
+    "T_JUP_ASPECT_SUN": {"score": 75, "title": "T木星がN太陽に吉角", "desc": "人生の発展期。自己肯定感が高まり、良きパートナーを引き寄せ、人生のステージが上がる。"},
+    "T_URA_ASPECT_VENUS": {"score": 75, "title": "T天王星がN金星にアスペクト", "desc": "突然の出会いや電撃的な恋愛、または現在の関係に変化が訪れる。今までにないタイプの人に強く惹かれ、関係性が大きく動く可能性。"},
     "P_MOON_CONJ_VENUS": {"score": 75, "title": "P月がN金星に合", "desc": "恋愛気分が盛り上がり、ときめきを感じやすい。デートや出会いに最適なタイミング。"},
-    "P_VENUS_ASPECT_MARS": {"score": 80, "title": "P金星がN火星にアスペクト", "desc": "愛情と情熱が結びつき、ロマンスが燃え上がる強力な配置。関係が急速に進展しやすい。"}
+    
+    "T_SAT_ASPECT_VENUS": {"score": 70, "title": "T土星がN金星にアスペクト", "desc": "恋愛関係に試練や責任が伴うが、それを乗り越えることで関係が安定し、真剣なものへと進む。結婚への覚悟を固める時期。"},
+    "P_MOON_CONJ_JUP": {"score": 70, "title": "P月がN木星に合", "desc": "精神的に満たされ、幸福感が高まる。楽観的な気持ちが良縁を引き寄せる。"},
 }
 PREFECTURES = {
     "北海道": (141.35, 43.06), "青森県": (140.74, 40.82), "岩手県": (141.15, 39.70), "宮城県": (140.87, 38.27),
@@ -65,22 +77,31 @@ PREFECTURES = {
 
 # --- 計算ロジック関数 ---
 
+def calculate_midpoint(p1, p2):
+    diff = (p2 - p1 + 360) % 360
+    return (p1 + diff / 2) % 360 if diff <= 180 else (p2 + (360 - diff) / 2) % 360
+
 @st.cache_data
 def get_natal_chart(birth_dt_jst, lon, lat):
     dt_utc = birth_dt_jst.astimezone(timezone.utc)
-    year, month, day = dt_utc.year, dt_utc.month, dt_utc.day
-    hour, minute, second = dt_utc.hour, dt_utc.minute, float(dt_utc.second)
+    year, month, day, hour, minute, second = dt_utc.year, dt_utc.month, dt_utc.day, dt_utc.hour, dt_utc.minute, float(dt_utc.second)
     jday = swe.utc_to_jd(year, month, day, hour, minute, second, 1)[1]
     chart_data = {"jday": jday, "lon": lon, "lat": lat}
+    
     try:
         cusps, ascmc = swe.houses(jday, lat, lon, b'P')
-    except Exception:
-        return None
+    except Exception: return None
+    
     chart_data["ASC_pos"], chart_data["MC_pos"] = float(ascmc[0]), float(ascmc[1])
     temp_planet_ids = PLANET_IDS.copy()
     temp_planet_ids.update({"ASC": swe.ASC, "MC": swe.MC})
+    
     for name, pid in temp_planet_ids.items():
         chart_data[name] = chart_data[f"{name}_pos"] if name in ["ASC", "MC"] else float(swe.calc_ut(jday, pid)[0][0])
+    
+    # ▼▼▼ 太陽/月ミッドポイントの計算を追加 ▼▼▼
+    chart_data["SunMoonMidpoint"] = calculate_midpoint(chart_data["太陽"], chart_data["月"])
+    
     chart_data["DSC_pos"] = (chart_data["ASC_pos"] + 180) % 360
     chart_data["IC_pos"] = (chart_data["MC_pos"] + 180) % 360
     chart_data["cusps"] = cusps
@@ -89,10 +110,6 @@ def get_natal_chart(birth_dt_jst, lon, lat):
     ruler_name = RULER_OF_SIGN[dsc_sign]
     chart_data["7H_RulerName"], chart_data["7H_Ruler_pos"] = ruler_name, chart_data.get(ruler_name)
     return chart_data
-
-def calculate_midpoint(p1, p2):
-    diff = (p2 - p1 + 360) % 360
-    return (p1 + diff / 2) % 360 if diff <= 180 else (p2 + (360 - diff) / 2) % 360
 
 @st.cache_data
 def create_composite_chart(chart_a, chart_b):
@@ -105,6 +122,8 @@ def create_composite_chart(chart_a, chart_b):
     composite_chart["DSC_pos"] = (composite_chart["ASC_pos"] + 180) % 360
     composite_chart["jday"], composite_chart["太陽"] = chart_a["jday"], composite_chart.get("太陽")
     composite_chart["7H_RulerName"], composite_chart["7H_Ruler_pos"] = None, None
+    # コンポジットチャートにも便宜上ミッドポイントを計算
+    composite_chart["SunMoonMidpoint"] = calculate_midpoint(composite_chart["太陽"], composite_chart["月"])
     return composite_chart
 
 @st.cache_data
@@ -127,40 +146,51 @@ def find_events(_natal_chart, birth_dt, years=80, is_composite=False):
             return (abs(dist_c) <= orb and abs(dist_p) > orb) or (dist_p * dist_c < 0)
         def check_ingress(curr, prev, cusp):
             return ((curr - cusp + 360) % 360 < 10) and ((prev - cusp + 360) % 360 > 350)
-        # Event checks...
+        
+        # --- ▼▼▼ イベントチェックロジックに新規項目を追加 ▼▼▼ ---
+        #トランジット
         if check_ingress(t_pos["木星"], prev_positions['t']["木星"], _natal_chart["cusps"][6]): events_by_date.setdefault(current_date.date(), []).append("T_JUP_7H_INGRESS")
         if check_ingress(t_pos["土星"], prev_positions['t']["土星"], _natal_chart["cusps"][6]): events_by_date.setdefault(current_date.date(), []).append("T_SAT_7H_INGRESS")
         if check_crossing(t_pos["木星"], prev_positions['t']["木星"], _natal_chart["DSC_pos"], ORB): events_by_date.setdefault(current_date.date(), []).append("T_JUP_CONJ_DSC")
         if check_crossing(t_pos["土星"], prev_positions['t']["土星"], _natal_chart["DSC_pos"], ORB): events_by_date.setdefault(current_date.date(), []).append("T_SAT_CONJ_DSC")
+        if "SunMoonMidpoint" in _natal_chart and check_crossing(t_pos["木星"], prev_positions['t']["木星"], _natal_chart["SunMoonMidpoint"], ORB): events_by_date.setdefault(current_date.date(), []).append("T_JUP_CONJ_SMMidpoint") #新規
         for aspect in GOOD_ASPECTS:
             if check_crossing(t_pos["木星"], prev_positions['t']["木星"], (_natal_chart["金星"] + aspect) % 360, ORB): events_by_date.setdefault(current_date.date(), []).append("T_JUP_ASPECT_VENUS")
             if check_crossing(t_pos["木星"], prev_positions['t']["木星"], (_natal_chart["太陽"] + aspect) % 360, ORB): events_by_date.setdefault(current_date.date(), []).append("T_JUP_ASPECT_SUN")
         for aspect in MAJOR_ASPECTS:
             if check_crossing(t_pos["土星"], prev_positions['t']["土星"], (_natal_chart["金星"] + aspect) % 360, ORB): events_by_date.setdefault(current_date.date(), []).append("T_SAT_ASPECT_VENUS")
             if check_crossing(t_pos["天王星"], prev_positions['t']["天王星"], (_natal_chart["金星"] + aspect) % 360, ORB): events_by_date.setdefault(current_date.date(), []).append("T_URA_ASPECT_VENUS")
+        #ソーラーアーク
         if "ASC_pos" in sa_pos and "金星" in _natal_chart and check_crossing(sa_pos["ASC_pos"], prev_positions['sa']["ASC_pos"], _natal_chart["金星"], ORB): events_by_date.setdefault(current_date.date(), []).append("SA_ASC_CONJ_VENUS")
         if "MC_pos" in sa_pos and "金星" in _natal_chart and check_crossing(sa_pos["MC_pos"], prev_positions['sa']["MC_pos"], _natal_chart["金星"], ORB): events_by_date.setdefault(current_date.date(), []).append("SA_MC_CONJ_VENUS")
         if "金星" in sa_pos and "ASC_pos" in _natal_chart and check_crossing(sa_pos["金星"], prev_positions['sa']["金星"], _natal_chart["ASC_pos"], ORB): events_by_date.setdefault(current_date.date(), []).append("SA_VENUS_CONJ_ASC")
         if "木星" in sa_pos and "ASC_pos" in _natal_chart and check_crossing(sa_pos["木星"], prev_positions['sa']["木星"], _natal_chart["ASC_pos"], ORB): events_by_date.setdefault(current_date.date(), []).append("SA_JUP_CONJ_ASC")
+        if "金星" in sa_pos and "月" in _natal_chart and check_crossing(sa_pos["金星"], prev_positions['sa']["金星"], _natal_chart["月"], ORB): events_by_date.setdefault(current_date.date(), []).append("SA_VENUS_CONJ_MOON") #新規
+        if "MC_pos" in sa_pos and "太陽" in _natal_chart and check_crossing(sa_pos["MC_pos"], prev_positions['sa']["MC_pos"], _natal_chart["太陽"], ORB): events_by_date.setdefault(current_date.date(), []).append("SA_MC_CONJ_SUN") #新規
         if not is_composite and "7H_Ruler_pos" in sa_pos:
             if check_crossing(sa_pos["7H_Ruler_pos"], prev_positions['sa'].get("7H_Ruler_pos", 0), _natal_chart["ASC_pos"], ORB): events_by_date.setdefault(current_date.date(), []).append("SA_7Ruler_CONJ_ASC_DSC")
             if check_crossing(sa_pos["7H_Ruler_pos"], prev_positions['sa'].get("7H_Ruler_pos", 0), _natal_chart["DSC_pos"], ORB): events_by_date.setdefault(current_date.date(), []).append("SA_7Ruler_CONJ_ASC_DSC")
+        #プログレス
         if check_ingress(p_pos["月"], prev_positions['p']["月"], _natal_chart["cusps"][6]): events_by_date.setdefault(current_date.date(), []).append("P_MOON_7H_INGRESS")
         if "木星" in _natal_chart and check_crossing(p_pos["月"], prev_positions['p']["月"], _natal_chart["木星"], ORB): events_by_date.setdefault(current_date.date(), []).append("P_MOON_CONJ_JUP")
         if "金星" in _natal_chart and check_crossing(p_pos["月"], prev_positions['p']["月"], _natal_chart["金星"], ORB): events_by_date.setdefault(current_date.date(), []).append("P_MOON_CONJ_VENUS")
+        if "SunMoonMidpoint" in _natal_chart and check_crossing(p_pos["月"], prev_positions['p']["月"], _natal_chart["SunMoonMidpoint"], ORB): events_by_date.setdefault(current_date.date(), []).append("P_MOON_CONJ_SMMidpoint") #新規
+        if "金星" in p_pos and check_crossing(p_pos["金星"], prev_positions['p']["金星"], _natal_chart["DSC_pos"], ORB): events_by_date.setdefault(current_date.date(), []).append("P_VENUS_CONJ_DSC") #新規
         if "火星" in _natal_chart and "金星" in p_pos:
             for aspect in MAJOR_ASPECTS:
                 if check_crossing(p_pos["金星"], prev_positions['p']["金星"], (_natal_chart["火星"] + aspect) % 360, ORB): events_by_date.setdefault(current_date.date(), []).append("P_VENUS_ASPECT_MARS")
+
         prev_positions = {'t': t_pos, 'p': p_pos, 'sa': sa_pos}
+        
     scored_events = []
     for date, event_keys in events_by_date.items():
         unique_keys = list(set(event_keys))
-        total_score = sum(EVENT_DEFINITIONS[key]["score"] for key in unique_keys)
+        total_score = sum(EVENT_DEFINITIONS[key]["score"] for key in unique_keys if key in EVENT_DEFINITIONS)
         scored_events.append({"date": date, "score": total_score, "keys": unique_keys})
     if not scored_events: return []
     max_score = max(event["score"] for event in scored_events) if scored_events else 1
     for event in scored_events:
-        event["normalized_score"] = (event["score"] / max_score) * 100
+        event["normalized_score"] = (event["score"] / max_score) * 100 if max_score > 0 else 0
     return sorted(scored_events, key=lambda x: x["score"], reverse=True)
 
 @st.cache_data
@@ -179,7 +209,7 @@ def synthesize_couple_events(events_a, events_b, events_comp):
         if data['score'] > 0:
             final_events.append({
                 "month": month_str, "score": data['score'],
-                "normalized_score": (data['score'] / max_combined_score) * 100,
+                "normalized_score": (data['score'] / max_combined_score) * 100 if max_combined_score > 0 else 0,
                 "events_detail": data['events']
             })
     return sorted(final_events, key=lambda x: x['score'], reverse=True)
@@ -237,15 +267,12 @@ if mode == "1人用":
             natal_chart = get_natal_chart(birth_dt_jst, lon, lat)
             if natal_chart:
                 all_events = find_events(natal_chart, birth_dt_jst)
-                
-                # ▼▼▼ 修正箇所 ▼▼▼
                 filtered_events = []
                 for event in all_events:
                     age = event["date"].year - birth_date.year - ((event["date"].month, event["date"].day) < (birth_date.month, birth_date.day))
                     if start_age <= age <= end_age:
                         event['age'] = age
                         filtered_events.append(event)
-                # ▲▲▲ 修正完了 ▲▲▲
 
                 st.success("計算が完了しました！")
                 if filtered_events:
