@@ -8,7 +8,7 @@ from collections import defaultdict
 import traceback
 
 # --- 初期設定 ---
-APP_VERSION = "8.6 (デフォルト値・期間修正版)"
+APP_VERSION = "8.7 (構文エラー修正版)"
 swe.set_ephe_path('ephe')
 
 # --- 定数定義 ---
@@ -237,7 +237,15 @@ if mode == "1人用":
             natal_chart = get_natal_chart(birth_dt_jst, lon, lat)
             if natal_chart:
                 all_events = find_events(natal_chart, birth_dt_jst)
-                filtered_events = [e for e in all_events if start_age <= (e['age'] := e["date"].year - birth_date.year - ((e["date"].month, e["date"].day) < (birth_date.month, birth_date.day))) <= end_age]
+                
+                # ▼▼▼ 修正箇所 ▼▼▼
+                filtered_events = []
+                for event in all_events:
+                    age = event["date"].year - birth_date.year - ((event["date"].month, event["date"].day) < (birth_date.month, birth_date.day))
+                    if start_age <= age <= end_age:
+                        event['age'] = age
+                        filtered_events.append(event)
+                # ▲▲▲ 修正完了 ▲▲▲
 
                 st.success("計算が完了しました！")
                 if filtered_events:
