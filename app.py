@@ -88,21 +88,27 @@ PREFECTURES = {
 def get_natal_chart(birth_dt_jst, lon, lat):
     """出生時の天体情報（ネイタルチャート）を計算して辞書として返す"""
     dt_utc = birth_dt_jst.astimezone(timezone.utc)
-    # swe.utc_to_jdはタプルを返すので、ユリウス日を取得するために[1]をつけます
     jday = swe.utc_to_jd(dt_utc.year, dt_utc.month, dt_utc.day, dt_utc.hour + dt_utc.minute / 60.0, 1)[1]
     
     chart_data = {"jday": jday, "lon": lon, "lat": lat}
     
     # 天体と感受点の位置を計算
     for name, pid in PLANET_IDS.items():
-        chart_data[name] = swe.calc_ut(jday, pid)[0][0]
+        # 修正点: 計算結果をfloat()で明示的にキャストし、予期せぬデータ型を防ぎます。
+        chart_data[name] = float(swe.calc_ut(jday, pid)[0][0])
 
     # ハウスとASC/MCを計算
-    cusps, ascmc = swe.houses(jday, lat, lon, b'P') # プラシーダス法
-    chart_data["ASC_pos"] = ascmc[0]
-    chart_data["MC_pos"] = ascmc[1]
-    chart_data["DSC_pos"] = (ascmc[0] + 180) % 360 # DSCはASCの180度反対
-    chart_data["IC_pos"] = (ascmc[1] + 180) % 360 # ICはMCの180度反対
+    # 修正点: ハウス計算が失敗した場合のエラーハンドリングを追加。
+    cusps_ascmc = swe.houses(jday, lat, lon, b'P')
+    if not isinstance(cusps_ascmc[0], tuple):
+        st.error("ハウス計算に失敗しました。出生時刻や場所が有効か確認してください。")
+        return None # Noneを返して処理を中断
+        
+    cusps, ascmc = cusps_ascmc
+    chart_data["ASC_pos"] = float(ascmc[0])
+    chart_data["MC_pos"] = float(ascmc[1])
+    chart_data["DSC_pos"] = (chart_data["ASC_pos"] + 180) % 360
+    chart_data["IC_pos"] = (chart_data["MC_pos"] + 180) % 360
     chart_data["cusps"] = cusps
 
     # 第7ハウスの支配星（ルーラー）を特定
@@ -121,27 +127,19 @@ def check_crossing(current_pos, prev_pos, target_pos, orb):
     天体がターゲットのオーブ内に入ったか、または正確な度数を通過したかを判定する。
     360度の循環（例: 359度 -> 1度）を考慮する。
     """
-    # ターゲットとの角度差を計算 (-180から+180の範囲に正規化)
     dist_curr = (current_pos - target_pos + 180) % 360 - 180
     dist_prev = (prev_pos - target_pos + 180) % 360 - 180
 
-    # オーブに入った瞬間を捉える
     if abs(dist_curr) <= orb and abs(dist_prev) > orb and abs(dist_prev - dist_curr) < (orb * 5):
         return True
-        
-    # 正確な度数をまたいだ瞬間を捉える (例: -1度 -> +0.5度)
     if dist_prev * dist_curr < 0 and abs(dist_prev - dist_curr) < (orb * 5):
         return True
-
     return False
 
 def check_ingress(current_pos, prev_pos, cusp_pos):
     """天体がハウスカスプを通過したか（イングレイス）を判定する"""
-    # カスプを0度として正規化
     norm_curr = (current_pos - cusp_pos + 360) % 360
     norm_prev = (prev_pos - cusp_pos + 360) % 360
-    
-    # 0度をまたいだかを判定 (例: 359度 -> 1度)
     if norm_prev > 350 and norm_curr < 10:
         return True
     return False
@@ -166,14 +164,14 @@ def find_events(_natal_chart, birth_dt, years=80):
         current_jday = _natal_chart["jday"] + age_in_days
 
         # T (Transit)
-        t_pos = {p: swe.calc_ut(current_jday, PLANET_IDS[p])[0][0] for p in t_planets}
+        t_pos = {p: float(swe.calc_ut(current_jday, PLANET_IDS[p])[0][0]) for p in t_planets}
         
         # P (Progressed)
         p_jday = _natal_chart["jday"] + age_in_days / 365.25
-        p_pos = {p: swe.calc_ut(p_jday, PLANET_IDS[p])[0][0] for p in p_planets}
+        p_pos = {p: float(swe.calc_ut(p_jday, PLANET_IDS[p])[0][0]) for p in p_planets}
         
         # SA (Solar Arc)
-        sa_arc = swe.calc_ut(p_jday, swe.SUN)[0][0] - _natal_chart["太陽"]
+        sa_arc = float(swe.calc_ut(p_jday, swe.SUN)[0][0]) - _natal_chart["太陽"]
         sa_pos = {p: (_natal_chart[p] + sa_arc) % 360 for p in sa_points if p in _natal_chart and _natal_chart[p] is not None}
 
         if not prev_positions:
@@ -302,7 +300,12 @@ if st.button("鑑定開始", type="primary"):
         
         with st.spinner("高度な計算を実行中... (80年分の運勢を計算しています。しばらくお待ちください)"):
             natal_chart = get_natal_chart(birth_dt_jst, lon, lat)
-            if natal_chart.get("7H_Ruler_pos") is None:
+            
+            # 修正点: get_natal_chartがNoneを返した場合の処理を追加
+            if natal_chart is None:
+                # エラーメッセージはget_natal_chart内で表示されるので、ここでは何もしない
+                pass
+            elif natal_chart.get("7H_Ruler_pos") is None:
                  st.error(f"エラー: 第7ハウスの支配星（{natal_chart.get('7H_RulerName')}）の位置を計算できませんでした。")
             else:
                 all_events = find_events(natal_chart, birth_dt_jst, years=80)
