@@ -8,7 +8,7 @@ from collections import defaultdict
 import traceback
 
 # --- 初期設定 ---
-APP_VERSION = "8.1 (計算ロジック改善版)"
+APP_VERSION = "8.3 (1人用モード年齢選択修正版)"
 swe.set_ephe_path('ephe')
 
 # --- 定数定義 ---
@@ -241,8 +241,9 @@ if mode == "1人用":
     with st.expander("使い方と注意点"):
         st.markdown("""
         1.  **生年月日、出生時刻、出生地**を入力してください。
-        2.  出生時刻が正確であるほど精度が上がります。不明な場合は「12:00」で計算します。
-        3.  「鑑定開始」ボタンを押すと計算が始まります。
+        2.  **鑑定したい年齢の範囲**を選択してください。
+        3.  出生時刻が正確であるほど精度が上がります。不明な場合は「12:00」で計算します。
+        4.  「鑑定開始」ボタンを押すと計算が始まります。
         """)
     
     col1, col2 = st.columns(2)
@@ -258,6 +259,16 @@ if mode == "1人用":
         st.warning("時刻は「時:分」の形式で入力してください。例: 16:27")
         hour, minute = 12, 0
 
+    st.markdown("---")
+    st.markdown("#### ④ 鑑定範囲（年齢）")
+    age_col1, age_col2 = st.columns(2)
+    with age_col1:
+        age_options = list(range(18, 81))
+        start_age = st.selectbox("開始年齢", options=age_options, index=7, key="start_age_1p") # デフォルト25歳
+    with age_col2:
+        end_age_options = list(range(start_age + 1, 82))
+        end_age = st.selectbox("終了年齢", options=end_age_options, index=len(end_age_options) - 1, key="end_age_1p") # デフォルト最大
+
     if st.button("鑑定開始", type="primary"):
         jst_tz = timezone(timedelta(hours=9))
         birth_dt_jst = datetime.datetime(birth_date.year, birth_date.month, birth_date.day, hour, minute, tzinfo=jst_tz)
@@ -267,14 +278,24 @@ if mode == "1人用":
             natal_chart = get_natal_chart(birth_dt_jst, lon, lat)
             if natal_chart:
                 all_events = find_events(natal_chart, birth_dt_jst)
+                
+                filtered_events = []
+                for event in all_events:
+                    age = event["date"].year - birth_date.year - ((event["date"].month, event["date"].day) < (birth_date.month, birth_date.day))
+                    if start_age <= age < end_age:
+                        event['age'] = age
+                        filtered_events.append(event)
+
                 st.success("計算が完了しました！")
-                st.header("🌟 あなたの人生における結婚運のピーク TOP15", divider="rainbow")
-                if not all_events:
-                    st.warning("鑑定期間内に、指定された重要な天体の配置は見つかりませんでした。")
+                st.header(f"🌟 あなたの結婚運のピーク TOP15（{start_age}歳～{end_age-1}歳）", divider="rainbow")
+                
+                if not filtered_events:
+                    st.warning(f"選択された年齢範囲（{start_age}歳～{end_age-1}歳）に、指定された重要な天体の配置は見つかりませんでした。")
                 else:
-                    for event in all_events[:15]:
+                    sorted_filtered_events = sorted(filtered_events, key=lambda x: x['normalized_score'], reverse=True)
+                    for event in sorted_filtered_events[:15]:
                         date_str = event["date"].strftime('%Y年%m月%d日')
-                        age = event["date"].year - birth_date.year - ((event["date"].month, event["date"].day) < (birth_date.month, birth_date.day))
+                        age = event["age"]
                         score = event["normalized_score"]
                         st.subheader(f"{date_str}頃 ({age}歳)")
                         st.markdown(f"**重要度: {score:.0f}%**")
@@ -298,12 +319,12 @@ elif mode == "2人用":
     col1, col2 = st.columns(2)
     with col1:
         st.subheader("Aさんの情報")
-        a_birth_date = st.date_input("① 生年月日", key="a_date", value=datetime.date(1990, 1, 1))
+        a_birth_date = st.date_input("① 生年月日", min_value=datetime.date(1940, 1, 1), max_value=datetime.date.today(), key="a_date", value=datetime.date(1990, 1, 1))
         a_custom_time_str = st.text_input("② 出生時刻 (例: 16:27)", "12:00", key="a_time")
         a_pref = st.selectbox("③ 出生地", options=list(PREFECTURES.keys()), index=12, key="a_pref")
     with col2:
         st.subheader("Bさんの情報")
-        b_birth_date = st.date_input("① 生年月日", key="b_date", value=datetime.date(1992, 5, 10))
+        b_birth_date = st.date_input("① 生年月日", min_value=datetime.date(1940, 1, 1), max_value=datetime.date.today(), key="b_date", value=datetime.date(1992, 5, 10))
         b_custom_time_str = st.text_input("② 出生時刻 (例: 16:27)", "12:00", key="b_time")
         b_pref = st.selectbox("③ 出生地", options=list(PREFECTURES.keys()), index=26, key="b_pref")
 
@@ -335,8 +356,8 @@ elif mode == "2人用":
                         st.header("🌟 お二人の結婚運が最高潮に達する時期 TOP15", divider="rainbow")
                         for event in couple_events[:15]:
                             month_dt = datetime.datetime.strptime(event["month"], "%Y-%m")
-                            age_a = month_dt.year - a_birth_date.year - ((month_dt.month, month_dt.day) < (a_birth_date.month, a_birth_date.day))
-                            age_b = month_dt.year - b_birth_date.year - ((month_dt.month, month_dt.day) < (b_birth_date.month, b_birth_date.day))
+                            age_a = month_dt.year - a_birth_date.year - ((month_dt.month, 1) < (a_birth_date.month, a_birth_date.day))
+                            age_b = month_dt.year - b_birth_date.year - ((month_dt.month, 1) < (b_birth_date.month, b_birth_date.day))
                             st.subheader(f"{month_dt.strftime('%Y年%m月')}頃 (Aさん: {age_a}歳 / Bさん: {age_b}歳)")
                             st.markdown(f"**総合重要度: {event['normalized_score']:.0f}%**")
                             st.progress(int(event['normalized_score']))
