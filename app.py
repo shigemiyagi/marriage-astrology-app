@@ -4,11 +4,13 @@ import datetime
 from datetime import timezone, timedelta
 import math
 import traceback
+import pandas as pd
+import altair as alt
 
 # --- 初期設定 ---
 
 # アプリのバージョン情報
-APP_VERSION = "5.1 (UI/UX改善版)"
+APP_VERSION = "6.0 (グラフ機能追加版)"
 
 # 1. 天文暦ファイルのパス
 swe.set_ephe_path('ephe')
@@ -231,7 +233,6 @@ st.info(f"アプリバージョン: {APP_VERSION}")
 st.write("トランジット、プログレス、ソーラーアークの3技法を統合し、あなたの結婚運がピークに達する時期をスコア化して予測します。")
 
 with st.expander("使い方と注意点"):
-    # 修正点: Markdownの表示崩れを修正
     st.markdown("""
     1.  **生年月日、出生時刻、出生地**を入力してください。
     2.  出生時刻が正確であるほど、プログレスやソーラーアークの精度が上がります。不明な場合は「12:00」で計算します。
@@ -243,7 +244,6 @@ with st.expander("使い方と注意点"):
     * これはあくまで占星術的な可能性の指標であり、未来を保証するものではありません。
     """)
 
-# 修正点: デフォルト値を変更
 col1, col2 = st.columns(2)
 with col1:
     birth_date = st.date_input("① 生年月日", min_value=datetime.date(1940, 1, 1), max_value=datetime.date.today(), value=datetime.date(1982, 10, 6))
@@ -252,7 +252,8 @@ with col2:
     tokyo_index = pref_options.index("東京都")
     pref = st.selectbox("③ 出生地（都道府県）", options=pref_options, index=tokyo_index)
 
-time_input_method = st.radio("② 出生時刻の入力方法", ["ドロップダウンから選択", "詳細時刻を入力", "不明"], index=1)
+time_input_method = st.radio("② 出生時刻の入力方法", ["ドロップダウンから選択", "詳細時刻を入力", "不明"], index=1, key="time_input_method")
+
 hour, minute = 2, 30
 
 if time_input_method == "ドロップダウンから選択":
@@ -286,15 +287,45 @@ if st.button("鑑定開始", type="primary"):
             else:
                 all_events = find_events(natal_chart, birth_dt_jst, years=80)
                 st.success("計算が完了しました！")
-                st.header("🌟 あなたの人生における結婚運のピーク TOP15", divider="rainbow")
                 
-                # 修正点: 結果表示の際に年齢でフィルタリング
                 filtered_events = []
                 for event in all_events:
                     age = event["date"].year - birth_date.year - ((event["date"].month, event["date"].day) < (birth_date.month, birth_date.day))
                     if 18 <= age < 70:
-                        event['age'] = age # 後で使えるように年齢をeventに追加
+                        event['age'] = age
                         filtered_events.append(event)
+                
+                # --- グラフ表示セクション ---
+                if filtered_events:
+                    st.header("💖 あなたの結婚運勢グラフ", divider="rainbow")
+                    st.write("人生における結婚運のピークを可視化しました。グラフの山が高いほど、複数の幸運な星回りが重なる重要な時期を示します。")
+
+                    chart_data = pd.DataFrame(
+                        [
+                            {"年齢": event['age'], "重要度(%)": event['normalized_score'], "時期": event['date'].strftime('%Y年%m月')}
+                            for event in filtered_events
+                        ]
+                    )
+                    
+                    chart = alt.Chart(chart_data).mark_bar(
+                        cornerRadiusTopLeft=3,
+                        cornerRadiusTopRight=3
+                    ).encode(
+                        x=alt.X('年齢:Q', title='年齢', axis=alt.Axis(tickMinStep=1, grid=False)),
+                        y=alt.Y('重要度(%):Q', title='重要度 (%)'),
+                        tooltip=[alt.Tooltip('年齢', title='年齢'), alt.Tooltip('重要度(%)', title='重要度 (%)', format='.0f'), alt.Tooltip('時期', title='時期')]
+                    ).properties(
+                        title='年齢別 結婚運のピーク'
+                    ).configure_axis(
+                        labelFontSize=12,
+                        titleFontSize=14
+                    ).configure_title(
+                        fontSize=16
+                    )
+                    st.altair_chart(chart, use_container_width=True)
+
+                # --- TOP15リスト表示セクション ---
+                st.header("🌟 あなたの人生における結婚運のピーク TOP15", divider="rainbow")
 
                 if not filtered_events:
                     st.warning("鑑定期間内（18歳～69歳）に、指定された重要な天体の配置は見つかりませんでした。")
