@@ -13,7 +13,7 @@ swe.set_ephe_path('ephe')
 PLANET_IDS = {
     "太陽": swe.SUN, "月": swe.MOON, "水星": swe.MERCURY, "金星": swe.VENUS, "火星": swe.MARS,
     "木星": swe.JUPITER, "土星": swe.SATURN, "天王星": swe.URANUS, "海王星": swe.NEPTUNE, "冥王星": swe.PLUTO,
-    "ASC": swe.ASC, "MC": swe.MC, "DSC": swe.DSC, "ジュノー": swe.AST_JUNA
+    "ASC": swe.ASC, "MC": swe.MC, "ジュノー": swe.AST_JUNA
 }
 PLANET_NAMES = {v: k for k, v in PLANET_IDS.items()}
 
@@ -34,7 +34,6 @@ RULER_IDS = { "太陽": swe.SUN, "月": swe.MOON, "水星": swe.MERCURY, "金星
 
 
 # --- イベントのスコアと解説 ---
-# 各イベントの重要度を点数化し、解説を紐付ける
 EVENT_DEFINITIONS = {
     # トランジット (T)
     "T_JUP_7H_INGRESS": {"score": 95, "title": "T木星が第7ハウス入り", "desc": "約12年に一度の最大の結婚幸運期。出会いのチャンスが拡大し、関係がスムーズに進展しやすい1年間。"},
@@ -59,7 +58,7 @@ EVENT_DEFINITIONS = {
 }
 
 
-# --- 都道府県データ (前回と同じ) ---
+# --- 都道府県データ ---
 PREFECTURES = {
     "北海道": (141.35, 43.06), "青森県": (140.74, 40.82), "岩手県": (141.15, 39.70),
     "宮城県": (140.87, 38.27), "秋田県": (140.10, 39.72), "山形県": (140.36, 38.24),
@@ -81,7 +80,6 @@ PREFECTURES = {
 
 
 # --- 計算ロジック関数 ---
-# (補助関数は前回とほぼ同じ)
 def get_julian_day(dt_utc):
     return swe.utc_to_jd(dt_utc.year, dt_utc.month, dt_utc.day, dt_utc.hour + dt_utc.minute / 60, 1)[1]
 
@@ -93,30 +91,33 @@ def get_natal_chart(birth_dt_jst, lon, lat):
     jday = get_julian_day(dt_utc)
     chart_data = {"jday": jday, "lon": lon, "lat": lat}
     
+    # 惑星・感受点の位置を計算
     for name, pid in PLANET_IDS.items():
-        if pid < swe.AST_OFFSET: # 惑星と感受点
-            res, _ = swe.calc_ut(jday, pid)
-            chart_data[name] = res[0]
-        elif pid >= swe.AST_OFFSET: # 小惑星
+        if pid < swe.AST_OFFSET:
+             res, _ = swe.calc_ut(jday, pid)
+             chart_data[name] = res[0]
+        elif pid >= swe.AST_OFFSET:
              res, _ = swe.calc_ut(jday, pid)
              chart_data[name] = res[0]
 
+    # ハウスと主要な軸を計算
     cusps, ascmc = swe.houses(jday, lat, lon, b'P')
     chart_data["ASC"] = ascmc[0]
     chart_data["MC"] = ascmc[1]
-    chart_data["DSC"] = cusps[6]
+    chart_data["DSC"] = cusps[6] # DSCは7ハウスの開始点
     chart_data["cusps"] = cusps
 
+    # 7ハウスの支配星を特定
     dsc_sign = ZODIAC_SIGNS[int(chart_data["DSC"] / 30)]
     ruler_name = RULER_OF_SIGN[dsc_sign]
     chart_data["7H_RulerName"] = ruler_name
-    chart_data["7H_Ruler"] = chart_data.get(ruler_name)
+    chart_data["7H_Ruler"] = chart_data.get(ruler_name) # 計算済みの惑星位置から取得
     return chart_data
 
 def find_events(natal_chart, birth_dt, years=80):
     events_by_date = {}
     
-    # 3日間隔でチェックし、高速化
+    # 3日間隔でチェックし、処理を高速化
     for day_offset in range(0, int(365.25 * years), 3):
         current_date = birth_dt + timedelta(days=day_offset)
         age_in_days = (current_date - birth_dt).days
@@ -132,13 +133,12 @@ def find_events(natal_chart, birth_dt, years=80):
         sa_arc = get_planet_longitude(p_jday, swe.SUN) - natal_chart["太陽"]
         sa_pos = {p: (natal_chart[p] + sa_arc) % 360 for p in ["ASC", "MC", "金星", "木星", "7H_Ruler"] if p in natal_chart and natal_chart[p] is not None}
         
-        # --- イベントチェック ---
-        # 簡易チェックのため、オーブ内に入ったらヒットとする
+        # --- イベントチェック (簡略版) ---
+        # オーブ内に入ったらヒットと判定
         
         # T木星
         if abs((t_pos["木星"] - natal_chart["DSC"])%360) < ORB or abs((t_pos["木星"] - natal_chart["DSC"])%360-360) < ORB: events_by_date.setdefault(current_date, []).append("T_JUP_CONJ_DSC")
         if abs((t_pos["木星"] - natal_chart["金星"])%360) < ORB or abs(abs((t_pos["木星"] - natal_chart["金星"])%360)-120) < ORB : events_by_date.setdefault(current_date, []).append("T_JUP_ASPECT_VENUS")
-        # 他の主要トランジットも同様に追加可能...
 
         # SA
         if "ASC" in sa_pos and abs((sa_pos["ASC"] - natal_chart["金星"])%360) < ORB : events_by_date.setdefault(current_date, []).append("SA_ASC_CONJ_VENUS")
@@ -149,14 +149,11 @@ def find_events(natal_chart, birth_dt, years=80):
         # P
         if "月" in p_pos and abs((p_pos["月"] - natal_chart["金星"])%360) < ORB : events_by_date.setdefault(current_date, []).append("P_MOON_CONJ_VENUS")
         if "金星" in p_pos and natal_chart.get("火星") and (abs((p_pos["金星"]-natal_chart["火星"])%360) < ORB or abs(abs((p_pos["金星"]-natal_chart["火星"])%360)-120) < ORB): events_by_date.setdefault(current_date, []).append("P_VENUS_ASPECT_MARS")
-        
-        # ハウスイングレス (簡略化のため代表的なもののみ)
-        # ここではコードの簡潔さのため省略するが、実際には厳密なイングレス判定が必要
 
     # スコア計算
     scored_events = []
     for date, event_keys in events_by_date.items():
-        unique_keys = list(set(event_keys)) # 重複削除
+        unique_keys = list(set(event_keys))
         total_score = sum(EVENT_DEFINITIONS[key]["score"] for key in unique_keys)
         scored_events.append({"date": date, "score": total_score, "keys": unique_keys})
         
@@ -168,7 +165,6 @@ def find_events(natal_chart, birth_dt, years=80):
         for event in scored_events:
             event["normalized_score"] = (event["score"] / max_score) * 100
     
-    # スコアの高い順にソート
     return sorted(scored_events, key=lambda x: x["score"], reverse=True)
 
 
@@ -177,7 +173,6 @@ st.set_page_config(page_title="結婚タイミング占い【PRO】", page_icon=
 st.title("💖 結婚タイミング占い【PRO版】")
 st.write("トランジット、プログレス、ソーラーアークの3技法を統合し、あなたの結婚運がピークに達する時期をスコア化して予測します。")
 
-# ... (前回のUI部分: expander, 入力フォーム)
 with st.expander("使い方と注意点"):
     st.markdown("""
     1.  **生年月日、出生時刻、出生地**を入力してください。
@@ -221,7 +216,7 @@ if st.button("鑑定開始", type="primary"):
         if not all_events:
             st.warning("指定された重要な天体の配置は見つかりませんでした。")
         else:
-            for event in all_events[:15]: # 上位15件を表示
+            for event in all_events[:15]:
                 date_str = event["date"].strftime('%Y年%m月%d日')
                 score = event["normalized_score"]
                 st.subheader(f"{date_str}頃")
@@ -230,9 +225,10 @@ if st.button("鑑定開始", type="primary"):
                 
                 with st.expander("この時期に何が起こる？ 詳細を見る"):
                     for key in event["keys"]:
-                        info = EVENT_DEFINITIONS[key]
-                        st.markdown(f"**▶ {info['title']}**")
-                        st.write(info['desc'])
+                        info = EVENT_DEFINITIONS.get(key)
+                        if info:
+                            st.markdown(f"**▶ {info['title']}**")
+                            st.write(info['desc'])
                 st.write("---")
 
     except Exception as e:
