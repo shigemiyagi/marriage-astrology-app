@@ -2,7 +2,6 @@ import streamlit as st
 import swisseph as swe
 import datetime
 from datetime import timezone, timedelta
-import math
 
 # --- 初期設定 ---
 
@@ -81,71 +80,87 @@ PREFECTURES = {
 
 
 # --- 計算ロジック関数 ---
-def get_julian_day(dt_utc):
-    return swe.utc_to_jd(dt_utc.year, dt_utc.month, dt_utc.day, dt_utc.hour + dt_utc.minute / 60, 1)[1]
-
-def get_planet_longitude(jday, planet_id):
-    res, _ = swe.calc_ut(jday, planet_id)
-    return res[0]
-
 def get_natal_chart(birth_dt_jst, lon, lat):
     dt_utc = birth_dt_jst.astimezone(timezone.utc)
-    jday = get_julian_day(dt_utc)
+    jday = swe.utc_to_jd(dt_utc.year, dt_utc.month, dt_utc.day, dt_utc.hour + dt_utc.minute / 60, 1)[1]
     chart_data = {"jday": jday, "lon": lon, "lat": lat}
     
-    # 惑星・感受点の位置を計算
     for name, pid in PLANET_IDS.items():
-        chart_data[name] = get_planet_longitude(jday, pid)
+        chart_data[name] = swe.calc_ut(jday, pid)[0][0]
 
-    # ハウスと主要な軸を計算
     cusps, ascmc = swe.houses(jday, lat, lon, b'P')
-    chart_data["ASC"] = ascmc[0]
-    chart_data["MC"] = ascmc[1]
-    chart_data["DSC"] = cusps[6] # DSCは7ハウスの開始点
+    chart_data["ASC_pos"] = ascmc[0]
+    chart_data["MC_pos"] = ascmc[1]
+    chart_data["DSC_pos"] = cusps[6]
     chart_data["cusps"] = cusps
 
-    # 7ハウスの支配星を特定
-    dsc_sign = ZODIAC_SIGNS[int(chart_data["DSC"] / 30)]
+    dsc_sign = ZODIAC_SIGNS[int(chart_data["DSC_pos"] / 30)]
     ruler_name = RULER_OF_SIGN[dsc_sign]
     chart_data["7H_RulerName"] = ruler_name
-    chart_data["7H_Ruler"] = chart_data.get(ruler_name) # 計算済みの惑星位置から取得
+    chart_data["7H_Ruler_pos"] = chart_data.get(ruler_name)
     return chart_data
 
-def find_events(natal_chart, birth_dt, years=80):
+@st.cache_data
+def find_events(_natal_chart, birth_dt, years=80):
     events_by_date = {}
     
-    # 3日間隔でチェックし、処理を高速化
-    for day_offset in range(0, int(365.25 * years), 3):
+    # 1日前の天体位置を保持する辞書
+    prev_positions = {}
+
+    for day_offset in range(int(365.25 * years)):
         current_date = birth_dt + timedelta(days=day_offset)
-        age_in_days = (current_date - birth_dt).days
-        current_jday = natal_chart["jday"] + age_in_days
+        age_in_days = day_offset
+        current_jday = _natal_chart["jday"] + age_in_days
 
         # --- 計算対象の位置を取得 ---
         # T (Transit)
-        t_pos = {p: get_planet_longitude(current_jday, pid) for p, pid in PLANET_IDS.items() if p in ["木星", "土星", "天王星"]}
-        # P (Progressed) - 1日1年法
-        p_jday = natal_chart["jday"] + age_in_days / 365.25
-        p_pos = {p: get_planet_longitude(p_jday, pid) for p, pid in PLANET_IDS.items() if p in ["月", "金星"]}
+        t_pos = {p: swe.calc_ut(current_jday, pid)[0][0] for p, pid in PLANET_IDS.items() if p in ["木星", "土星", "天王星"]}
+        # P (Progressed)
+        p_jday = _natal_chart["jday"] + age_in_days / 365.25
+        p_pos = {p: swe.calc_ut(p_jday, pid)[0][0] for p, pid in PLANET_IDS.items() if p in ["月", "金星", "火星"]}
         # SA (Solar Arc)
-        sa_arc = get_planet_longitude(p_jday, swe.SUN) - natal_chart["太陽"]
-        sa_pos = {p: (natal_chart[p] + sa_arc) % 360 for p in ["ASC", "MC", "金星", "木星", "7H_Ruler"] if p in natal_chart and natal_chart[p] is not None}
-        
-        # --- イベントチェック (簡略版) ---
-        # オーブ内に入ったらヒットと判定
-        
-        # T木星
-        if abs((t_pos["木星"] - natal_chart["DSC"])%360) < ORB or abs((t_pos["木星"] - natal_chart["DSC"])%360-360) < ORB: events_by_date.setdefault(current_date.date(), []).append("T_JUP_CONJ_DSC")
-        if abs((t_pos["木星"] - natal_chart["金星"])%360) < ORB or abs(abs((t_pos["木星"] - natal_chart["金星"])%360)-120) < ORB : events_by_date.setdefault(current_date.date(), []).append("T_JUP_ASPECT_VENUS")
+        sa_arc = swe.calc_ut(p_jday, swe.SUN)[0][0] - _natal_chart["太陽"]
+        sa_pos = {p: (_natal_chart[p] + sa_arc) % 360 for p in ["ASC_pos", "MC_pos", "金星", "木星", "7H_Ruler_pos"] if p in _natal_chart and _natal_chart[p] is not None}
 
-        # SA
-        if "ASC" in sa_pos and abs((sa_pos["ASC"] - natal_chart["金星"])%360) < ORB : events_by_date.setdefault(current_date.date(), []).append("SA_ASC_CONJ_VENUS")
-        if "MC" in sa_pos and abs((sa_pos["MC"] - natal_chart["金星"])%360) < ORB : events_by_date.setdefault(current_date.date(), []).append("SA_MC_CONJ_VENUS")
-        if "金星" in sa_pos and abs((sa_pos["金星"] - natal_chart["ASC"])%360) < ORB : events_by_date.setdefault(current_date.date(), []).append("SA_VENUS_CONJ_ASC")
-        if "7H_Ruler" in sa_pos and natal_chart.get("7H_Ruler") is not None and (abs((sa_pos["7H_Ruler"] - natal_chart["ASC"])%360) < ORB or abs((sa_pos["7H_Ruler"] - natal_chart["DSC"])%360) < ORB) : events_by_date.setdefault(current_date.date(), []).append("SA_7Ruler_CONJ_ASC_DSC")
+        if not prev_positions: # 初回ループ
+            prev_positions = {'t': t_pos, 'p': p_pos, 'sa': sa_pos}
+            continue
 
-        # P
-        if "月" in p_pos and abs((p_pos["月"] - natal_chart["金星"])%360) < ORB : events_by_date.setdefault(current_date.date(), []).append("P_MOON_CONJ_VENUS")
-        if "金星" in p_pos and natal_chart.get("火星") and (abs((p_pos["金星"]-natal_chart["火星"])%360) < ORB or abs(abs((p_pos["金星"]-natal_chart["火星"])%360)-120) < ORB): events_by_date.setdefault(current_date.date(), []).append("P_VENUS_ASPECT_MARS")
+        # --- イベント発生をチェック ---
+        # T木星とDSCの合
+        prev_angle = abs(prev_positions['t']["木星"] - _natal_chart["DSC_pos"]) % 180
+        current_angle = abs(t_pos["木星"] - _natal_chart["DSC_pos"]) % 180
+        if min(prev_angle, current_angle) < ORB and max(prev_angle, current_angle) > (180 - ORB):
+            events_by_date.setdefault(current_date.date(), []).append("T_JUP_CONJ_DSC")
+
+        # SA 7HルーラーとASC/DSCの合
+        if "7H_Ruler_pos" in sa_pos:
+            prev_angle_asc = abs(prev_positions['sa']["7H_Ruler_pos"] - _natal_chart["ASC_pos"]) % 180
+            current_angle_asc = abs(sa_pos["7H_Ruler_pos"] - _natal_chart["ASC_pos"]) % 180
+            if min(prev_angle_asc, current_angle_asc) < ORB and max(prev_angle_asc, current_angle_asc) > (180 - ORB):
+                events_by_date.setdefault(current_date.date(), []).append("SA_7Ruler_CONJ_ASC_DSC")
+            
+            prev_angle_dsc = abs(prev_positions['sa']["7H_Ruler_pos"] - _natal_chart["DSC_pos"]) % 180
+            current_angle_dsc = abs(sa_pos["7H_Ruler_pos"] - _natal_chart["DSC_pos"]) % 180
+            if min(prev_angle_dsc, current_angle_dsc) < ORB and max(prev_angle_dsc, current_angle_dsc) > (180 - ORB):
+                events_by_date.setdefault(current_date.date(), []).append("SA_7Ruler_CONJ_ASC_DSC")
+
+        # P金星とN火星の吉角
+        if "火星" in _natal_chart and "金星" in p_pos:
+            for aspect_deg in [0, 120]:
+                prev_angle = abs(prev_positions['p']["金星"] - _natal_chart["火星"]) % 360
+                prev_angle = min(prev_angle, 360 - prev_angle)
+                current_angle = abs(p_pos["金星"] - _natal_chart["火星"]) % 360
+                current_angle = min(current_angle, 360 - current_angle)
+
+                if min(prev_angle, current_angle) < aspect_deg < max(prev_angle, current_angle):
+                     if abs(current_angle - aspect_deg) < ORB:
+                         events_by_date.setdefault(current_date.date(), []).append("P_VENUS_ASPECT_MARS")
+
+
+        # 位置を更新
+        prev_positions = {'t': t_pos, 'p': p_pos, 'sa': sa_pos}
+
 
     # スコア計算
     scored_events = []
@@ -174,7 +189,7 @@ with st.expander("使い方と注意点"):
     st.markdown("""
     1.  **生年月日、出生時刻、出生地**を入力してください。
     2.  出生時刻が正確であるほど、プログレスやソーラーアークの精度が上がります。
-    3.  「鑑定開始」ボタンを押すと、複数の技法を横断的に計算するため、**10〜30秒ほど時間がかかります。**
+    3.  「鑑定開始」ボタンを押すと、複数の技法を横断的に計算するため、**30秒〜1分ほど時間がかかります。**
     ---
     **【重要】**
     * 表示される**重要度(%)**は、鑑定期間内で最も可能性の高い時期を100%とした相対的なものです。
@@ -203,7 +218,7 @@ if st.button("鑑定開始", type="primary"):
         birth_dt_jst = datetime.datetime(birth_date.year, birth_date.month, birth_date.day, hour, minute, tzinfo=jst_tz)
         lon, lat = PREFECTURES[pref]
         
-        with st.spinner("高度な計算を実行中... (30秒ほどお待ちください)"):
+        with st.spinner("高度な計算を実行中... (しばらくお待ちください)"):
             natal_chart = get_natal_chart(birth_dt_jst, lon, lat)
             all_events = find_events(natal_chart, birth_dt_jst, years=80)
 
