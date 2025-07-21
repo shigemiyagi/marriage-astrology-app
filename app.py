@@ -13,7 +13,8 @@ swe.set_ephe_path('ephe')
 PLANET_IDS = {
     "太陽": swe.SUN, "月": swe.MOON, "水星": swe.MERCURY, "金星": swe.VENUS, "火星": swe.MARS,
     "木星": swe.JUPITER, "土星": swe.SATURN, "天王星": swe.URANUS, "海王星": swe.NEPTUNE, "冥王星": swe.PLUTO,
-    "ASC": swe.ASC, "MC": swe.MC, "ジュノー": swe.AST_JUNA
+    "ASC": swe.ASC, "MC": swe.MC,
+    "ジュノー": swe.AST_OFFSET + 3 # 小惑星番号3番がジュノー
 }
 PLANET_NAMES = {v: k for k, v in PLANET_IDS.items()}
 
@@ -84,7 +85,8 @@ def get_julian_day(dt_utc):
     return swe.utc_to_jd(dt_utc.year, dt_utc.month, dt_utc.day, dt_utc.hour + dt_utc.minute / 60, 1)[1]
 
 def get_planet_longitude(jday, planet_id):
-    return swe.calc_ut(jday, planet_id)[0][0]
+    res, _ = swe.calc_ut(jday, planet_id)
+    return res[0]
 
 def get_natal_chart(birth_dt_jst, lon, lat):
     dt_utc = birth_dt_jst.astimezone(timezone.utc)
@@ -93,12 +95,7 @@ def get_natal_chart(birth_dt_jst, lon, lat):
     
     # 惑星・感受点の位置を計算
     for name, pid in PLANET_IDS.items():
-        if pid < swe.AST_OFFSET:
-             res, _ = swe.calc_ut(jday, pid)
-             chart_data[name] = res[0]
-        elif pid >= swe.AST_OFFSET:
-             res, _ = swe.calc_ut(jday, pid)
-             chart_data[name] = res[0]
+        chart_data[name] = get_planet_longitude(jday, pid)
 
     # ハウスと主要な軸を計算
     cusps, ascmc = swe.houses(jday, lat, lon, b'P')
@@ -137,18 +134,18 @@ def find_events(natal_chart, birth_dt, years=80):
         # オーブ内に入ったらヒットと判定
         
         # T木星
-        if abs((t_pos["木星"] - natal_chart["DSC"])%360) < ORB or abs((t_pos["木星"] - natal_chart["DSC"])%360-360) < ORB: events_by_date.setdefault(current_date, []).append("T_JUP_CONJ_DSC")
-        if abs((t_pos["木星"] - natal_chart["金星"])%360) < ORB or abs(abs((t_pos["木星"] - natal_chart["金星"])%360)-120) < ORB : events_by_date.setdefault(current_date, []).append("T_JUP_ASPECT_VENUS")
+        if abs((t_pos["木星"] - natal_chart["DSC"])%360) < ORB or abs((t_pos["木星"] - natal_chart["DSC"])%360-360) < ORB: events_by_date.setdefault(current_date.date(), []).append("T_JUP_CONJ_DSC")
+        if abs((t_pos["木星"] - natal_chart["金星"])%360) < ORB or abs(abs((t_pos["木星"] - natal_chart["金星"])%360)-120) < ORB : events_by_date.setdefault(current_date.date(), []).append("T_JUP_ASPECT_VENUS")
 
         # SA
-        if "ASC" in sa_pos and abs((sa_pos["ASC"] - natal_chart["金星"])%360) < ORB : events_by_date.setdefault(current_date, []).append("SA_ASC_CONJ_VENUS")
-        if "MC" in sa_pos and abs((sa_pos["MC"] - natal_chart["金星"])%360) < ORB : events_by_date.setdefault(current_date, []).append("SA_MC_CONJ_VENUS")
-        if "金星" in sa_pos and abs((sa_pos["金星"] - natal_chart["ASC"])%360) < ORB : events_by_date.setdefault(current_date, []).append("SA_VENUS_CONJ_ASC")
-        if "7H_Ruler" in sa_pos and (abs((sa_pos["7H_Ruler"] - natal_chart["ASC"])%360) < ORB or abs((sa_pos["7H_Ruler"] - natal_chart["DSC"])%360) < ORB) : events_by_date.setdefault(current_date, []).append("SA_7Ruler_CONJ_ASC_DSC")
+        if "ASC" in sa_pos and abs((sa_pos["ASC"] - natal_chart["金星"])%360) < ORB : events_by_date.setdefault(current_date.date(), []).append("SA_ASC_CONJ_VENUS")
+        if "MC" in sa_pos and abs((sa_pos["MC"] - natal_chart["金星"])%360) < ORB : events_by_date.setdefault(current_date.date(), []).append("SA_MC_CONJ_VENUS")
+        if "金星" in sa_pos and abs((sa_pos["金星"] - natal_chart["ASC"])%360) < ORB : events_by_date.setdefault(current_date.date(), []).append("SA_VENUS_CONJ_ASC")
+        if "7H_Ruler" in sa_pos and natal_chart.get("7H_Ruler") is not None and (abs((sa_pos["7H_Ruler"] - natal_chart["ASC"])%360) < ORB or abs((sa_pos["7H_Ruler"] - natal_chart["DSC"])%360) < ORB) : events_by_date.setdefault(current_date.date(), []).append("SA_7Ruler_CONJ_ASC_DSC")
 
         # P
-        if "月" in p_pos and abs((p_pos["月"] - natal_chart["金星"])%360) < ORB : events_by_date.setdefault(current_date, []).append("P_MOON_CONJ_VENUS")
-        if "金星" in p_pos and natal_chart.get("火星") and (abs((p_pos["金星"]-natal_chart["火星"])%360) < ORB or abs(abs((p_pos["金星"]-natal_chart["火星"])%360)-120) < ORB): events_by_date.setdefault(current_date, []).append("P_VENUS_ASPECT_MARS")
+        if "月" in p_pos and abs((p_pos["月"] - natal_chart["金星"])%360) < ORB : events_by_date.setdefault(current_date.date(), []).append("P_MOON_CONJ_VENUS")
+        if "金星" in p_pos and natal_chart.get("火星") and (abs((p_pos["金星"]-natal_chart["火星"])%360) < ORB or abs(abs((p_pos["金星"]-natal_chart["火星"])%360)-120) < ORB): events_by_date.setdefault(current_date.date(), []).append("P_VENUS_ASPECT_MARS")
 
     # スコア計算
     scored_events = []
@@ -160,7 +157,7 @@ def find_events(natal_chart, birth_dt, years=80):
     if not scored_events: return []
     
     # スコアを正規化 (0-100%)
-    max_score = max(event["score"] for event in scored_events)
+    max_score = max(event["score"] for event in scored_events) if scored_events else 0
     if max_score > 0:
         for event in scored_events:
             event["normalized_score"] = (event["score"] / max_score) * 100
