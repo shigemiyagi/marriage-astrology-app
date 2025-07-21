@@ -10,7 +10,7 @@ import altair as alt
 # --- 初期設定 ---
 
 # アプリのバージョン情報
-APP_VERSION = "6.3 (グラフ再修正版)"
+APP_VERSION = "7.0 (年齢範囲選択機能付き)"
 
 # 1. 天文暦ファイルのパス
 swe.set_ephe_path('ephe')
@@ -270,6 +270,22 @@ else:
     hour, minute = 12, 0
     st.info("出生時刻が不明なため、正午(12:00)で計算します。月の位置やASC/MCの精度が若干低下します。")
 
+# 修正点: 年齢範囲を選択するUIを追加
+st.markdown("---")
+st.markdown("#### ④ 鑑定範囲（年齢）")
+age_col1, age_col2 = st.columns(2)
+with age_col1:
+    age_options = list(range(18, 81))
+    start_age = st.selectbox("開始年齢", options=age_options, index=0) # デフォルト18歳
+with age_col2:
+    end_age_options = list(range(start_age + 1, 81))
+    # 70歳が選択肢にあればデフォルトにする
+    try:
+        default_end_index = end_age_options.index(70)
+    except ValueError:
+        default_end_index = len(end_age_options) - 1
+    end_age = st.selectbox("終了年齢", options=end_age_options, index=default_end_index) # デフォルト70歳
+
 
 if st.button("鑑定開始", type="primary"):
     try:
@@ -291,7 +307,8 @@ if st.button("鑑定開始", type="primary"):
                 filtered_events = []
                 for event in all_events:
                     age = event["date"].year - birth_date.year - ((event["date"].month, event["date"].day) < (birth_date.month, birth_date.day))
-                    if 18 <= age < 70:
+                    # 修正点: ユーザーが選択した年齢範囲でフィルタリング
+                    if start_age <= age < end_age:
                         event['age'] = age
                         filtered_events.append(event)
                 
@@ -307,7 +324,6 @@ if st.button("鑑定開始", type="primary"):
                         ]
                     )
                     
-                    # 修正点: 棒グラフに戻す
                     chart = alt.Chart(chart_data).mark_bar(
                         cornerRadiusTopLeft=3,
                         cornerRadiusTopRight=3,
@@ -331,7 +347,8 @@ if st.button("鑑定開始", type="primary"):
                 st.header("🌟 あなたの人生における結婚運のピーク TOP15", divider="rainbow")
 
                 if not filtered_events:
-                    st.warning("鑑定期間内（18歳～69歳）に、指定された重要な天体の配置は見つかりませんでした。")
+                    # 修正点: 選択された年齢範囲を警告メッセージに含める
+                    st.warning(f"鑑定期間内（{start_age}歳～{end_age-1}歳）に、指定された重要な天体の配置は見つかりませんでした。")
                 else:
                     for event in filtered_events[:15]:
                         date_str = event["date"].strftime('%Y年%m月%d日')
