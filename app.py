@@ -2,13 +2,16 @@ import streamlit as st
 import swisseph as swe
 import datetime
 from datetime import timezone, timedelta
+import math
 
 # --- 初期設定 ---
 
 # 1. 天文暦ファイルのパス
+# Streamlit Cloudにデプロイする場合、epheフォルダがリポジトリのルートにあることを確認してください。
 swe.set_ephe_path('ephe')
 
 # 2. 定数定義
+# 注意: swe.DSCは存在しないため削除しました。DSCはハウス計算で求めます。
 PLANET_IDS = {
     "太陽": swe.SUN, "月": swe.MOON, "水星": swe.MERCURY, "金星": swe.VENUS, "火星": swe.MARS,
     "木星": swe.JUPITER, "土星": swe.SATURN, "天王星": swe.URANUS, "海王星": swe.NEPTUNE, "冥王星": swe.PLUTO,
@@ -17,8 +20,11 @@ PLANET_IDS = {
 }
 PLANET_NAMES = {v: k for k, v in PLANET_IDS.items()}
 
-ASPECTS = { 0: '合', 60: 'セクスタイル', 90: 'スクエア', 120: 'トライン', 180: 'オポジション' }
-ORB = 1.2
+# アスペクト定義（P金星とN火星用）
+# 吉角だけでなく、ハードアスペクトも強い影響力を持つため追加
+MAJOR_ASPECTS = { 0: '合', 60: 'セクスタイル', 90: 'スクエア', 120: 'トライン', 180: 'オポジション' }
+GOOD_ASPECTS = { 0: '合', 60: 'セクスタイル', 120: 'トライン' }
+ORB = 1.2 # アスペクトの許容範囲
 
 ZODIAC_SIGNS = [
     "牡羊座", "牡牛座", "双子座", "蟹座", "獅子座", "乙女座",
@@ -30,8 +36,7 @@ RULER_OF_SIGN = {
     "乙女座": "水星", "天秤座": "金星", "蠍座": "火星", "射手座": "木星", "山羊座": "土星",
     "水瓶座": "土星", "魚座": "木星"
 }
-RULER_IDS = { "太陽": swe.SUN, "月": swe.MOON, "水星": swe.MERCURY, "金星": swe.VENUS, "火星": swe.MARS, "木星": swe.JUPITER, "土星": swe.SATURN }
-
+# RULER_IDSは不要になったため削除
 
 # --- イベントのスコアと解説 ---
 EVENT_DEFINITIONS = {
@@ -57,7 +62,6 @@ EVENT_DEFINITIONS = {
     "P_VENUS_ASPECT_MARS": {"score": 80, "title": "P金星がN火星にアスペクト", "desc": "愛情と情熱が結びつき、ロマンスが燃え上がる強力な配置。関係が急速に進展しやすい。"}
 }
 
-
 # --- 都道府県データ ---
 PREFECTURES = {
     "北海道": (141.35, 43.06), "青森県": (140.74, 40.82), "岩手県": (141.15, 39.70),
@@ -80,87 +84,183 @@ PREFECTURES = {
 
 
 # --- 計算ロジック関数 ---
+
 def get_natal_chart(birth_dt_jst, lon, lat):
+    """出生時の天体情報（ネイタルチャート）を計算して辞書として返す"""
     dt_utc = birth_dt_jst.astimezone(timezone.utc)
-    jday = swe.utc_to_jd(dt_utc.year, dt_utc.month, dt_utc.day, dt_utc.hour + dt_utc.minute / 60, 1)[1]
+    # swe.utc_to_jdはタプルを返すので、ユリウス日を取得するために[1]をつけます
+    jday = swe.utc_to_jd(dt_utc.year, dt_utc.month, dt_utc.day, dt_utc.hour + dt_utc.minute / 60.0, 1)[1]
+    
     chart_data = {"jday": jday, "lon": lon, "lat": lat}
     
+    # 天体と感受点の位置を計算
     for name, pid in PLANET_IDS.items():
-        chart_data[name] = swe.calc_ut(jday, pid)[0][0]
+        # 小惑星の場合、ファイル名が必要になることがある
+        if pid > swe.PLUTO:
+            # swe.fixstar_ut()など、小惑星用の計算が必要な場合があるが、pyswissephではcalc_utで計算できる
+            # 小惑星番号から名前を取得する swe.get_planet_name(pid)
+            # ここではシンプルにcalc_utを使用
+            chart_data[name] = swe.calc_ut(jday, pid)[0][0]
+        else:
+            chart_data[name] = swe.calc_ut(jday, pid)[0][0]
 
-    cusps, ascmc = swe.houses(jday, lat, lon, b'P')
+    # ハウスとASC/MCを計算
+    cusps, ascmc = swe.houses(jday, lat, lon, b'P') # プラシーダス法
     chart_data["ASC_pos"] = ascmc[0]
     chart_data["MC_pos"] = ascmc[1]
-    chart_data["DSC_pos"] = cusps[6]
+    chart_data["DSC_pos"] = (ascmc[0] + 180) % 360 # DSCはASCの180度反対
+    chart_data["IC_pos"] = (ascmc[1] + 180) % 360 # ICはMCの180度反対
     chart_data["cusps"] = cusps
 
-    dsc_sign = ZODIAC_SIGNS[int(chart_data["DSC_pos"] / 30)]
+    # 第7ハウスの支配星（ルーラー）を特定
+    dsc_sign_index = int(chart_data["DSC_pos"] / 30)
+    dsc_sign = ZODIAC_SIGNS[dsc_sign_index]
     ruler_name = RULER_OF_SIGN[dsc_sign]
     chart_data["7H_RulerName"] = ruler_name
     chart_data["7H_Ruler_pos"] = chart_data.get(ruler_name)
+    
     return chart_data
+
+# --- イベント検出のためのヘルパー関数 ---
+
+def check_crossing(current_pos, prev_pos, target_pos, orb):
+    """
+    天体がターゲットのオーブ内に入ったか、または正確な度数を通過したかを判定する。
+    360度の循環（例: 359度 -> 1度）を考慮する。
+    """
+    # ターゲットとの角度差を計算 (-180から+180の範囲に正規化)
+    dist_curr = (current_pos - target_pos + 180) % 360 - 180
+    dist_prev = (prev_pos - target_pos + 180) % 360 - 180
+
+    # オーブに入った瞬間を捉える
+    # 1. 現在オーブ内にある
+    # 2. 以前はオーブ外にあった
+    # 3. 2点間の移動が大きすぎない（逆行などでオーブを跨ぐ場合を除外）
+    if abs(dist_curr) <= orb and abs(dist_prev) > orb and abs(dist_prev - dist_curr) < (orb * 5):
+        return True
+        
+    # 正確な度数をまたいだ瞬間を捉える (例: -1度 -> +0.5度)
+    if dist_prev * dist_curr < 0 and abs(dist_prev - dist_curr) < (orb * 5):
+        return True
+
+    return False
+
+def check_ingress(current_pos, prev_pos, cusp_pos):
+    """天体がハウスカスプを通過したか（イングレイス）を判定する"""
+    # カスプを0度として正規化
+    norm_curr = (current_pos - cusp_pos + 360) % 360
+    norm_prev = (prev_pos - cusp_pos + 360) % 360
+    
+    # 0度をまたいだかを判定 (例: 359度 -> 1度)
+    # 天体は1日で大きく動かないことを前提とする
+    if norm_prev > 350 and norm_curr < 10:
+        return True
+    return False
+
 
 @st.cache_data
 def find_events(_natal_chart, birth_dt, years=80):
+    """
+    指定された期間の占星術的イベントを検出し、スコア付けして返す。
+    この関数は、定義されたすべてのイベントをチェックするように完全に書き直されました。
+    """
     events_by_date = {}
     
+    # 計算に必要な天体リストを定義
+    t_planets = ["木星", "土星", "天王星"]
+    p_planets = ["月", "金星"]
+    sa_points = ["ASC_pos", "MC_pos", "金星", "木星", "7H_Ruler_pos"]
+
     # 1日前の天体位置を保持する辞書
     prev_positions = {}
 
-    for day_offset in range(int(365.25 * years)):
+    # 指定された年数（日数）をループ
+    for day_offset in range(1, int(365.25 * years)):
         current_date = birth_dt + timedelta(days=day_offset)
         age_in_days = day_offset
         current_jday = _natal_chart["jday"] + age_in_days
 
         # --- 計算対象の位置を取得 ---
         # T (Transit)
-        t_pos = {p: swe.calc_ut(current_jday, pid)[0][0] for p, pid in PLANET_IDS.items() if p in ["木星", "土星", "天王星"]}
-        # P (Progressed)
+        t_pos = {p: swe.calc_ut(current_jday, PLANET_IDS[p])[0][0] for p in t_planets}
+        
+        # P (Progressed) - 1日1年法
         p_jday = _natal_chart["jday"] + age_in_days / 365.25
-        p_pos = {p: swe.calc_ut(p_jday, pid)[0][0] for p, pid in PLANET_IDS.items() if p in ["月", "金星", "火星"]}
+        p_pos = {p: swe.calc_ut(p_jday, PLANET_IDS[p])[0][0] for p in p_planets}
+        
         # SA (Solar Arc)
         sa_arc = swe.calc_ut(p_jday, swe.SUN)[0][0] - _natal_chart["太陽"]
-        sa_pos = {p: (_natal_chart[p] + sa_arc) % 360 for p in ["ASC_pos", "MC_pos", "金星", "木星", "7H_Ruler_pos"] if p in _natal_chart and _natal_chart[p] is not None}
+        sa_pos = {p: (_natal_chart[p] + sa_arc) % 360 for p in sa_points if p in _natal_chart and _natal_chart[p] is not None}
 
-        if not prev_positions: # 初回ループ
+        if not prev_positions: # 初回ループはスキップ
             prev_positions = {'t': t_pos, 'p': p_pos, 'sa': sa_pos}
             continue
 
         # --- イベント発生をチェック ---
-        # T木星とDSCの合
-        prev_angle = abs(prev_positions['t']["木星"] - _natal_chart["DSC_pos"]) % 180
-        current_angle = abs(t_pos["木星"] - _natal_chart["DSC_pos"]) % 180
-        if min(prev_angle, current_angle) < ORB and max(prev_angle, current_angle) > (180 - ORB):
+        # 各イベント定義に対して、条件が満たされたかを確認していく
+        
+        # T木星/土星が7H入り (Ingress)
+        if check_ingress(t_pos["木星"], prev_positions['t']["木星"], _natal_chart["cusps"][6]):
+            events_by_date.setdefault(current_date.date(), []).append("T_JUP_7H_INGRESS")
+        if check_ingress(t_pos["土星"], prev_positions['t']["土星"], _natal_chart["cusps"][6]):
+            events_by_date.setdefault(current_date.date(), []).append("T_SAT_7H_INGRESS")
+
+        # T木星/土星がDSCと合 (Conjunction)
+        if check_crossing(t_pos["木星"], prev_positions['t']["木星"], _natal_chart["DSC_pos"], ORB):
             events_by_date.setdefault(current_date.date(), []).append("T_JUP_CONJ_DSC")
+        if check_crossing(t_pos["土星"], prev_positions['t']["土星"], _natal_chart["DSC_pos"], ORB):
+            events_by_date.setdefault(current_date.date(), []).append("T_SAT_CONJ_DSC")
 
-        # SA 7HルーラーとASC/DSCの合
+        # T天体がN天体と吉角 (Aspects)
+        for aspect in GOOD_ASPECTS:
+            if check_crossing(t_pos["木星"], prev_positions['t']["木星"], (_natal_chart["金星"] + aspect) % 360, ORB):
+                events_by_date.setdefault(current_date.date(), []).append("T_JUP_ASPECT_VENUS")
+            if check_crossing(t_pos["木星"], prev_positions['t']["木星"], (_natal_chart["太陽"] + aspect) % 360, ORB):
+                events_by_date.setdefault(current_date.date(), []).append("T_JUP_ASPECT_SUN")
+            if check_crossing(t_pos["土星"], prev_positions['t']["土星"], (_natal_chart["金星"] + aspect) % 360, ORB):
+                events_by_date.setdefault(current_date.date(), []).append("T_SAT_ASPECT_VENUS")
+            if check_crossing(t_pos["天王星"], prev_positions['t']["天王星"], (_natal_chart["金星"] + aspect) % 360, ORB):
+                events_by_date.setdefault(current_date.date(), []).append("T_URA_ASPECT_VENUS")
+        
+        # SA感受点がN天体と合 (Conjunction)
+        if "ASC_pos" in sa_pos and "金星" in _natal_chart:
+            if check_crossing(sa_pos["ASC_pos"], prev_positions['sa']["ASC_pos"], _natal_chart["金星"], ORB):
+                events_by_date.setdefault(current_date.date(), []).append("SA_ASC_CONJ_VENUS")
+        if "MC_pos" in sa_pos and "金星" in _natal_chart:
+            if check_crossing(sa_pos["MC_pos"], prev_positions['sa']["MC_pos"], _natal_chart["金星"], ORB):
+                events_by_date.setdefault(current_date.date(), []).append("SA_MC_CONJ_VENUS")
+        if "金星" in sa_pos and "ASC_pos" in _natal_chart:
+            if check_crossing(sa_pos["金星"], prev_positions['sa']["金星"], _natal_chart["ASC_pos"], ORB):
+                events_by_date.setdefault(current_date.date(), []).append("SA_VENUS_CONJ_ASC")
+        if "木星" in sa_pos and "ASC_pos" in _natal_chart:
+            if check_crossing(sa_pos["木星"], prev_positions['sa']["木星"], _natal_chart["ASC_pos"], ORB):
+                events_by_date.setdefault(current_date.date(), []).append("SA_JUP_CONJ_ASC")
+
+        # SA 7HルーラーがN ASC/DSCと合 (Conjunction)
         if "7H_Ruler_pos" in sa_pos:
-            prev_angle_asc = abs(prev_positions['sa']["7H_Ruler_pos"] - _natal_chart["ASC_pos"]) % 180
-            current_angle_asc = abs(sa_pos["7H_Ruler_pos"] - _natal_chart["ASC_pos"]) % 180
-            if min(prev_angle_asc, current_angle_asc) < ORB and max(prev_angle_asc, current_angle_asc) > (180 - ORB):
+            if check_crossing(sa_pos["7H_Ruler_pos"], prev_positions['sa']["7H_Ruler_pos"], _natal_chart["ASC_pos"], ORB):
                 events_by_date.setdefault(current_date.date(), []).append("SA_7Ruler_CONJ_ASC_DSC")
+            if check_crossing(sa_pos["7H_Ruler_pos"], prev_positions['sa']["7H_Ruler_pos"], _natal_chart["DSC_pos"], ORB):
+                events_by_date.setdefault(current_date.date(), []).append("SA_7Ruler_CONJ_ASC_DSC")
+
+        # P月が7H入り (Ingress)
+        if check_ingress(p_pos["月"], prev_positions['p']["月"], _natal_chart["cusps"][6]):
+            events_by_date.setdefault(current_date.date(), []).append("P_MOON_7H_INGRESS")
             
-            prev_angle_dsc = abs(prev_positions['sa']["7H_Ruler_pos"] - _natal_chart["DSC_pos"]) % 180
-            current_angle_dsc = abs(sa_pos["7H_Ruler_pos"] - _natal_chart["DSC_pos"]) % 180
-            if min(prev_angle_dsc, current_angle_dsc) < ORB and max(prev_angle_dsc, current_angle_dsc) > (180 - ORB):
-                events_by_date.setdefault(current_date.date(), []).append("SA_7Ruler_CONJ_ASC_DSC")
+        # P月がN天体と合 (Conjunction)
+        if check_crossing(p_pos["月"], prev_positions['p']["月"], _natal_chart["木星"], ORB):
+            events_by_date.setdefault(current_date.date(), []).append("P_MOON_CONJ_JUP")
+        if check_crossing(p_pos["月"], prev_positions['p']["月"], _natal_chart["金星"], ORB):
+            events_by_date.setdefault(current_date.date(), []).append("P_MOON_CONJ_VENUS")
 
-        # P金星とN火星の吉角
-        if "火星" in _natal_chart and "金星" in p_pos:
-            for aspect_deg in [0, 120]:
-                prev_angle = abs(prev_positions['p']["金星"] - _natal_chart["火星"]) % 360
-                prev_angle = min(prev_angle, 360 - prev_angle)
-                current_angle = abs(p_pos["金星"] - _natal_chart["火星"]) % 360
-                current_angle = min(current_angle, 360 - current_angle)
-
-                if min(prev_angle, current_angle) < aspect_deg < max(prev_angle, current_angle):
-                     if abs(current_angle - aspect_deg) < ORB:
-                         events_by_date.setdefault(current_date.date(), []).append("P_VENUS_ASPECT_MARS")
-
+        # P金星がN火星とアスペクト
+        if "火星" in _natal_chart:
+            for aspect in MAJOR_ASPECTS:
+                if check_crossing(p_pos["金星"], prev_positions['p']["金星"], (_natal_chart["火星"] + aspect) % 360, ORB):
+                    events_by_date.setdefault(current_date.date(), []).append("P_VENUS_ASPECT_MARS")
 
         # 位置を更新
         prev_positions = {'t': t_pos, 'p': p_pos, 'sa': sa_pos}
-
 
     # スコア計算
     scored_events = []
@@ -188,7 +288,7 @@ st.write("トランジット、プログレス、ソーラーアークの3技法
 with st.expander("使い方と注意点"):
     st.markdown("""
     1.  **生年月日、出生時刻、出生地**を入力してください。
-    2.  出生時刻が正確であるほど、プログレスやソーラーアークの精度が上がります。
+    2.  出生時刻が正確であるほど、プログレスやソーラーアークの精度が上がります。不明な場合は「12:00」で計算します。
     3.  「鑑定開始」ボタンを押すと、複数の技法を横断的に計算するため、**30秒〜1分ほど時間がかかります。**
     ---
     **【重要】**
@@ -203,46 +303,65 @@ with col1:
 with col2:
     pref = st.selectbox("③ 出生地（都道府県）", options=list(PREFECTURES.keys()), index=12)
 
-time_options = ["不明"] + [f"{h:02d}:00" for h in range(24)]
-selected_time = st.selectbox("② 出生時刻（24時間表記）", options=time_options, index=13)
-custom_time_str = st.text_input("または、詳細な時刻を入力 (例: 16:27)")
+# 時刻入力のUIを改善
+time_input_method = st.radio("② 出生時刻の入力方法", ["ドロップダウンから選択", "詳細時刻を入力", "不明"], index=0)
+
+hour, minute = 12, 0 # デフォルト値
+
+if time_input_method == "ドロップダウンから選択":
+    selected_time = st.selectbox("出生時刻（24時間表記）", options=[f"{h:02d}:00" for h in range(24)], index=12)
+    hour, minute = map(int, selected_time.split(':'))
+elif time_input_method == "詳細時刻を入力":
+    custom_time_str = st.text_input("詳細な時刻を入力 (例: 16:27)", "12:00")
+    try:
+        hour, minute = map(int, custom_time_str.split(':'))
+    except ValueError:
+        st.warning("時刻は「時:分」の形式で入力してください。例: 16:27")
+        hour, minute = 12, 0
+else: # 不明の場合
+    hour, minute = 12, 0
+    st.info("出生時刻が不明なため、正午(12:00)で計算します。月の位置やASC/MCの精度が若干低下します。")
+
 
 if st.button("鑑定開始", type="primary"):
     try:
-        if custom_time_str:
-            hour, minute = map(int, custom_time_str.split(':'))
-        elif selected_time == "不明": hour, minute = 12, 0
-        else: hour, minute = map(int, selected_time.split(':'))
-
+        # タイムゾーンを設定
         jst_tz = timezone(timedelta(hours=9))
         birth_dt_jst = datetime.datetime(birth_date.year, birth_date.month, birth_date.day, hour, minute, tzinfo=jst_tz)
         lon, lat = PREFECTURES[pref]
         
-        with st.spinner("高度な計算を実行中... (しばらくお待ちください)"):
+        with st.spinner("高度な計算を実行中... (80年分の運勢を計算しています。しばらくお待ちください)"):
             natal_chart = get_natal_chart(birth_dt_jst, lon, lat)
-            all_events = find_events(natal_chart, birth_dt_jst, years=80)
+            # 7HルーラーがNoneでないかチェック
+            if natal_chart.get("7H_Ruler_pos") is None:
+                 st.error(f"エラー: 第7ハウスの支配星（{natal_chart.get('7H_RulerName')}）の位置を計算できませんでした。")
+            else:
+                all_events = find_events(natal_chart, birth_dt_jst, years=80)
 
-        st.success("計算が完了しました！")
-        
-        st.header("🌟 あなたの人生における結婚運のピーク TOP15", divider="rainbow")
-        if not all_events:
-            st.warning("指定された重要な天体の配置は見つかりませんでした。")
-        else:
-            for event in all_events[:15]:
-                date_str = event["date"].strftime('%Y年%m月%d日')
-                score = event["normalized_score"]
-                st.subheader(f"{date_str}頃")
-                st.markdown(f"**重要度: {score:.0f}%**")
-                st.progress(int(score))
+                st.success("計算が完了しました！")
                 
-                with st.expander("この時期に何が起こる？ 詳細を見る"):
-                    for key in event["keys"]:
-                        info = EVENT_DEFINITIONS.get(key)
-                        if info:
-                            st.markdown(f"**▶ {info['title']}**")
-                            st.write(info['desc'])
-                st.write("---")
+                st.header("🌟 あなたの人生における結婚運のピーク TOP15", divider="rainbow")
+                if not all_events:
+                    st.warning("鑑定期間内に、指定された重要な天体の配置は見つかりませんでした。")
+                else:
+                    for event in all_events[:15]:
+                        date_str = event["date"].strftime('%Y年%m月%d日')
+                        age = event["date"].year - birth_date.year - ((event["date"].month, event["date"].day) < (birth_date.month, birth_date.day))
+                        score = event["normalized_score"]
+                        
+                        st.subheader(f"{date_str}頃 ({age}歳)")
+                        st.markdown(f"**重要度: {score:.0f}%**")
+                        st.progress(int(score))
+                        
+                        with st.expander("この時期に何が起こる？ 詳細を見る"):
+                            for key in event["keys"]:
+                                info = EVENT_DEFINITIONS.get(key)
+                                if info:
+                                    st.markdown(f"**▶ {info['title']}**")
+                                    st.write(info['desc'])
+                        st.write("---")
 
     except Exception as e:
         st.error(f"エラーが発生しました: {e}")
         st.error("入力値が正しいか、または天文暦ファイル(`ephe`フォルダ)が正しく配置されているか確認してください。")
+
