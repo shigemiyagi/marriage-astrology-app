@@ -10,7 +10,7 @@ import altair as alt
 # --- 初期設定 ---
 
 # アプリのバージョン情報
-APP_VERSION = "6.0 (グラフ機能追加版)"
+APP_VERSION = "6.1 (グラフ改善版)"
 
 # 1. 天文暦ファイルのパス
 swe.set_ephe_path('ephe')
@@ -307,21 +307,36 @@ if st.button("鑑定開始", type="primary"):
                         ]
                     )
                     
-                    chart = alt.Chart(chart_data).mark_bar(
-                        cornerRadiusTopLeft=3,
-                        cornerRadiusTopRight=3
-                    ).encode(
+                    # 修正点: 棒グラフからスムージング折れ線グラフに変更
+                    base = alt.Chart(chart_data).encode(
                         x=alt.X('年齢:Q', title='年齢', axis=alt.Axis(tickMinStep=1, grid=False)),
-                        y=alt.Y('重要度(%):Q', title='重要度 (%)'),
                         tooltip=[alt.Tooltip('年齢', title='年齢'), alt.Tooltip('重要度(%)', title='重要度 (%)', format='.0f'), alt.Tooltip('時期', title='時期')]
                     ).properties(
-                        title='年齢別 結婚運のピーク'
-                    ).configure_axis(
+                        title='年齢別 結婚運の推移'
+                    )
+
+                    line = base.mark_line(
+                        interpolate='monotone', # この行で線を滑らかにします
+                        color='salmon'
+                    ).encode(
+                        y=alt.Y('重要度(%):Q', title='重要度 (%)', scale=alt.Scale(domain=[0, 105]))
+                    )
+
+                    points = base.mark_point(
+                        size=80,
+                        filled=True,
+                        color='darkred'
+                    ).encode(
+                        y=alt.Y('重要度(%):Q', title='重要度 (%)')
+                    )
+
+                    chart = (line + points).configure_axis(
                         labelFontSize=12,
                         titleFontSize=14
                     ).configure_title(
                         fontSize=16
                     )
+                    
                     st.altair_chart(chart, use_container_width=True)
 
                 # --- TOP15リスト表示セクション ---
