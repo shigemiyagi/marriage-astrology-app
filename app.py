@@ -8,7 +8,7 @@ from collections import defaultdict
 import traceback
 
 # --- 初期設定 ---
-APP_VERSION = "8.3 (1人用モード年齢選択修正版)"
+APP_VERSION = "8.4 (1人用モード グラフ表示機能追加)"
 swe.set_ephe_path('ephe')
 
 # --- 定数定義 ---
@@ -162,6 +162,7 @@ def find_events(_natal_chart, birth_dt, years=80, is_composite=False):
             norm_prev = (prev_pos - cusp_pos + 360) % 360
             return norm_prev > 350 and norm_curr < 10
 
+        # --- イベントチェック (省略) ---
         if check_ingress(t_pos["木星"], prev_positions['t']["木星"], _natal_chart["cusps"][6]): events_by_date.setdefault(current_date.date(), []).append("T_JUP_7H_INGRESS")
         if check_ingress(t_pos["土星"], prev_positions['t']["土星"], _natal_chart["cusps"][6]): events_by_date.setdefault(current_date.date(), []).append("T_SAT_7H_INGRESS")
         if check_crossing(t_pos["木星"], prev_positions['t']["木星"], _natal_chart["DSC_pos"], ORB): events_by_date.setdefault(current_date.date(), []).append("T_JUP_CONJ_DSC")
@@ -266,8 +267,12 @@ if mode == "1人用":
         age_options = list(range(18, 81))
         start_age = st.selectbox("開始年齢", options=age_options, index=7, key="start_age_1p") # デフォルト25歳
     with age_col2:
-        end_age_options = list(range(start_age + 1, 82))
-        end_age = st.selectbox("終了年齢", options=end_age_options, index=len(end_age_options) - 1, key="end_age_1p") # デフォルト最大
+        end_age_options = list(range(start_age, 81))
+        #終了年齢のデフォルト値が開始年齢より小さくならないように調整
+        default_end_age_index = 20
+        if len(end_age_options) <= default_end_age_index:
+            default_end_age_index = len(end_age_options) -1
+        end_age = st.selectbox("終了年齢", options=end_age_options, index=default_end_age_index, key="end_age_1p") 
 
     if st.button("鑑定開始", type="primary"):
         jst_tz = timezone(timedelta(hours=9))
@@ -282,15 +287,41 @@ if mode == "1人用":
                 filtered_events = []
                 for event in all_events:
                     age = event["date"].year - birth_date.year - ((event["date"].month, event["date"].day) < (birth_date.month, birth_date.day))
-                    if start_age <= age < end_age:
+                    if start_age <= age <= end_age:
                         event['age'] = age
                         filtered_events.append(event)
 
                 st.success("計算が完了しました！")
-                st.header(f"🌟 あなたの結婚運のピーク TOP15（{start_age}歳～{end_age-1}歳）", divider="rainbow")
+
+                # ▼▼▼ グラフ表示機能を追加 ▼▼▼
+                if filtered_events:
+                    st.header(f"📊 結婚運勢グラフ（{start_age}歳～{end_age}歳）", divider="rainbow")
+                    
+                    df_for_chart = pd.DataFrame(filtered_events)
+                    chart_data = df_for_chart.groupby('age')['normalized_score'].max().reset_index()
+
+                    chart = alt.Chart(chart_data).mark_line(
+                        point=alt.OverlayMarkDef(color="#F63366", size=40)
+                    ).encode(
+                        x=alt.X('age:Q', title='年齢', scale=alt.Scale(zero=False, domain=[start_age, end_age])),
+                        y=alt.Y('normalized_score:Q', title='重要度 (%)', scale=alt.Scale(domain=[0, 105])),
+                        tooltip=[
+                            alt.Tooltip('age', title='年齢'),
+                            alt.Tooltip('normalized_score', title='重要度 (%)', format='.1f')
+                        ]
+                    ).properties(
+                        title=alt.TitleParams(
+                            text='年齢別・結婚運のピーク',
+                            anchor='middle'
+                        )
+                    ).interactive()
+                    st.altair_chart(chart, use_container_width=True)
+                # ▲▲▲ グラフ表示機能ここまで ▲▲▲
+
+                st.header(f"🌟 あなたの結婚運のピーク TOP15（{start_age}歳～{end_age}歳）", divider="rainbow")
                 
                 if not filtered_events:
-                    st.warning(f"選択された年齢範囲（{start_age}歳～{end_age-1}歳）に、指定された重要な天体の配置は見つかりませんでした。")
+                    st.warning(f"選択された年齢範囲（{start_age}歳～{end_age}歳）に、指定された重要な天体の配置は見つかりませんでした。")
                 else:
                     sorted_filtered_events = sorted(filtered_events, key=lambda x: x['normalized_score'], reverse=True)
                     for event in sorted_filtered_events[:15]:
@@ -303,7 +334,8 @@ if mode == "1人用":
                         with st.expander("この時期に何が起こる？ 詳細を見る"):
                             for key in event["keys"]:
                                 info = EVENT_DEFINITIONS.get(key)
-                                st.markdown(f"**▶ {info['title']}**: {info['desc']}")
+                                if info:
+                                    st.markdown(f"**▶ {info['title']}**: {info['desc']}")
                         st.write("---")
 
 # --- 2人用モード ---
@@ -330,11 +362,13 @@ elif mode == "2人用":
 
     if st.button("お二人の結婚タイミングを鑑定する", type="primary"):
         try:
-            jst_tz = timezone(timedelta(hours=9))
+            # --- データ処理 (入力検証など) ---
             a_hour, a_minute = map(int, a_custom_time_str.split(':'))
+            b_hour, b_minute = map(int, b_custom_time_str.split(':'))
+            
+            jst_tz = timezone(timedelta(hours=9))
             a_birth_dt_jst = datetime.datetime(a_birth_date.year, a_birth_date.month, a_birth_date.day, a_hour, a_minute, tzinfo=jst_tz)
             a_lon, a_lat = PREFECTURES[a_pref]
-            b_hour, b_minute = map(int, b_custom_time_str.split(':'))
             b_birth_dt_jst = datetime.datetime(b_birth_date.year, b_birth_date.month, b_birth_date.day, b_hour, b_minute, tzinfo=jst_tz)
             b_lon, b_lat = PREFECTURES[b_pref]
 
@@ -356,6 +390,7 @@ elif mode == "2人用":
                         st.header("🌟 お二人の結婚運が最高潮に達する時期 TOP15", divider="rainbow")
                         for event in couple_events[:15]:
                             month_dt = datetime.datetime.strptime(event["month"], "%Y-%m")
+                            # --- 正確な満年齢計算 ---
                             age_a = month_dt.year - a_birth_date.year - ((month_dt.month, 1) < (a_birth_date.month, a_birth_date.day))
                             age_b = month_dt.year - b_birth_date.year - ((month_dt.month, 1) < (b_birth_date.month, b_birth_date.day))
                             st.subheader(f"{month_dt.strftime('%Y年%m月')}頃 (Aさん: {age_a}歳 / Bさん: {age_b}歳)")
@@ -370,9 +405,12 @@ elif mode == "2人用":
                                     else:
                                         for key in unique_keys:
                                             info = EVENT_DEFINITIONS.get(key)
-                                            st.markdown(f"* **{info['title']}**")
+                                            if info:
+                                                st.markdown(f"**▶ {info['title']}**: {info['desc']}")
                             st.write("---")
 
+        except ValueError:
+            st.error("時刻の入力形式が正しくありません。お二人の時刻を「時:分」（例: 16:27）の形式で入力してください。")
         except Exception as e:
             st.error(f"予期せぬエラーが発生しました: {e}")
             traceback.print_exc()
